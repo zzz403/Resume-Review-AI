@@ -1,6 +1,14 @@
-import type { Review, ReviewResponse } from '../types'
+import type { Review, ReviewResponse, ExtractResponse } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+
+export async function extractResume(file: File): Promise<ExtractResponse> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${API_BASE}/extract`, { method: 'POST', body: form })
+  if (!res.ok) throw new Error('Failed to extract resume')
+  return res.json()
+}
 
 export async function submitResume(resumeText: string): Promise<ReviewResponse> {
   const res = await fetch(`${API_BASE}/review`, {

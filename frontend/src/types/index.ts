@@ -10,3 +10,7 @@ export interface ReviewResponse {
   score: number | null
   feedback: string
 }
+
+export interface ExtractResponse {
+  text: string
+}
