@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from ai import review_resume
 from db import save_review, fetch_history
+from extractor import extract_text
 
 app = FastAPI()
 
@@ -15,6 +16,14 @@ app.add_middleware(
 
 class ReviewRequest(BaseModel):
     resume_text: str
+
+@app.post("/extract")
+async def extract(file: UploadFile = File(...)):
+    content = await file.read()
+    text = extract_text(file.filename or "", content)
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="Could not extract text from this file")
+    return {"text": text}
 
 @app.post("/review")
 def review(req: ReviewRequest):

@@ -1,61 +1,90 @@
-import { useState, useEffect } from 'react'
-import { ResumeInput } from './components/ResumeInput'
-import { ScoreDisplay } from './components/ScoreDisplay'
+import { useState } from 'react'
+import { UploadPanel } from './components/UploadPanel'
+import { ResultPanel } from './components/ResultPanel'
 import { HistoryList } from './components/HistoryList'
-import { submitResume, getHistory } from './api'
+import { extractResume, submitResume, getHistory } from './api'
 import type { Review, ReviewResponse } from './types'
 
 export default function App() {
+  const [fileName, setFileName] = useState<string | null>(null)
+  const [extractedText, setExtractedText] = useState<string | null>(null)
   const [result, setResult] = useState<ReviewResponse | null>(null)
   const [history, setHistory] = useState<Review[]>([])
-  const [loading, setLoading] = useState(false)
+  const [extracting, setExtracting] = useState(false)
+  const [reviewing, setReviewing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [view, setView] = useState<'review' | 'history'>('review')
+  const [view, setView] = useState<'main' | 'history'>('main')
 
-  useEffect(() => {
-    getHistory().then(setHistory).catch(() => {})
-  }, [])
+  async function handleFileSelect(file: File) {
+    setFileName(file.name)
+    setExtractedText(null)
+    setResult(null)
+    setError(null)
+    setExtracting(true)
+    try {
+      const { text } = await extractResume(file)
+      setExtractedText(text)
+    } catch {
+      setError('Could not extract text from this file.')
+    } finally {
+      setExtracting(false)
+    }
+  }
 
-  async function handleSubmit(text: string) {
-    setLoading(true)
+  async function handleReview() {
+    if (!extractedText) return
+    setReviewing(true)
     setError(null)
     try {
-      const res = await submitResume(text)
+      const res = await submitResume(extractedText)
       setResult(res)
-      const updated = await getHistory()
-      setHistory(updated)
+      getHistory().then(setHistory).catch(() => {})
     } catch {
-      setError('Something went wrong. Is the backend running on port 8000?')
+      setError('Review failed. Is the backend running on port 8000?')
     } finally {
-      setLoading(false)
+      setReviewing(false)
     }
+  }
+
+  async function handleShowHistory() {
+    setView('history')
+    getHistory().then(setHistory).catch(() => {})
   }
 
   return (
     <div className="app">
       <header className="header">
-        <h1 className="logo">
-          Resume Review <span>AI</span>
-        </h1>
+        <h1 className="logo">Resume Review <span>AI</span></h1>
         <button
           className="btn-ghost"
-          onClick={() => setView(view === 'review' ? 'history' : 'review')}
+          onClick={() => view === 'main' ? handleShowHistory() : setView('main')}
         >
-          {view === 'review' ? `History (${history.length})` : '← Back'}
+          {view === 'main' ? 'History' : '← Back'}
         </button>
       </header>
 
-      <main className="main">
-        {view === 'history' ? (
+      {error && <p className="error-banner">{error}</p>}
+
+      {view === 'history' ? (
+        <div className="single-col">
           <HistoryList items={history} />
-        ) : (
-          <>
-            <ResumeInput onSubmit={handleSubmit} loading={loading} />
-            {error && <p className="error-box">{error}</p>}
-            <ScoreDisplay result={result} />
-          </>
-        )}
-      </main>
+        </div>
+      ) : (
+        <div className="two-col">
+          <UploadPanel
+            onFileSelect={handleFileSelect}
+            onReview={handleReview}
+            fileName={fileName}
+            hasExtracted={!!extractedText}
+            loading={reviewing}
+          />
+          <ResultPanel
+            extractedText={extractedText}
+            result={result}
+            extracting={extracting}
+          />
+        </div>
+      )}
     </div>
   )
 }
