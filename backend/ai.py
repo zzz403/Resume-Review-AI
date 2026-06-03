@@ -1,10 +1,9 @@
 import os
 import anthropic
 from dotenv import load_dotenv
+from fastapi import HTTPException
 
 load_dotenv()
-
-_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 # ── Starter: intentionally naive ──────────────────────────────────────────
 #
@@ -25,7 +24,12 @@ _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 # ──────────────────────────────────────────────────────────────────────────
 
 def review_resume(resume_text: str) -> dict:
-    message = _client.messages.create(
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key or api_key.lower() in {"dummy", "your_anthropic_api_key_here"}:
+        raise HTTPException(status_code=400, detail="Anthropic API key is not configured.")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=512,
         messages=[

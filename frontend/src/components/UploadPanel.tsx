@@ -2,13 +2,27 @@ import { useRef, useState, DragEvent } from 'react'
 
 interface Props {
   onFileSelect: (file: File) => void
-  onReview: () => void
   fileName: string | null
-  hasExtracted: boolean
+  submitted: boolean
   loading: boolean
+  label?: string
+  emptyTitle?: string
+  savedLabel?: string
+  loadingLabel?: string
+  buttonIdleLabel?: string
 }
 
-export function UploadPanel({ onFileSelect, onReview, fileName, hasExtracted, loading }: Props) {
+export function UploadPanel({
+  onFileSelect,
+  fileName,
+  submitted,
+  loading,
+  label = 'Upload Application',
+  emptyTitle = 'Drop your application here',
+  savedLabel = 'Application Saved',
+  loadingLabel = 'Processing...',
+  buttonIdleLabel = 'Upload Application',
+}: Props) {
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -21,7 +35,7 @@ export function UploadPanel({ onFileSelect, onReview, fileName, hasExtracted, lo
 
   return (
     <div className="panel upload-panel">
-      <p className="label">Upload Resume</p>
+      <p className="label">{label}</p>
 
       <div
         className={`dropzone ${dragging ? 'dragging' : ''} ${fileName ? 'has-file' : ''}`}
@@ -44,12 +58,12 @@ export function UploadPanel({ onFileSelect, onReview, fileName, hasExtracted, lo
           <div className="file-selected">
             <span className="file-icon">📄</span>
             <span className="file-name">{fileName}</span>
-            <span className="file-change">Click to change</span>
+            <span className="file-change">{loading ? loadingLabel : 'Click to change'}</span>
           </div>
         ) : (
           <div className="dropzone-hint">
             <span className="dropzone-icon">⬆</span>
-            <span>Drop your resume here</span>
+            <span>{emptyTitle}</span>
             <span>or <u>click to browse</u></span>
             <span className="dropzone-formats">PDF · DOCX · TXT</span>
           </div>
@@ -58,10 +72,9 @@ export function UploadPanel({ onFileSelect, onReview, fileName, hasExtracted, lo
 
       <button
         className="btn-primary"
-        onClick={onReview}
-        disabled={!hasExtracted || loading}
+        disabled
       >
-        {loading ? 'Reviewing…' : 'Review Resume →'}
+        {loading ? loadingLabel : submitted ? savedLabel : buttonIdleLabel}
       </button>
     </div>
   )
