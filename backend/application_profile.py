@@ -3,6 +3,8 @@ import os
 import re
 from dataclasses import dataclass
 
+import llm
+
 
 @dataclass(frozen=True)
 class CourseGrade:
@@ -1023,22 +1025,14 @@ def _resume_feature_summary(resume_text: str, stem_statement: str) -> dict[str, 
 
 
 def _ai_resume_feature_summary(resume_text: str, stem_statement: str) -> dict[str, str] | None:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key or api_key.lower() in {"dummy", "your_anthropic_api_key_here"}:
+    if not llm.is_configured():
         return None
 
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        message = llm.complete(
             max_tokens=500,
             temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
+            prompt=(
                         "Extract and summarize STEM-relevant features from this high school applicant's resume.\n"
                         "Focus on concrete evidence of what they did, not isolated keywords. Include programming, engineering, robotics, research, lab/science, healthcare/clinical, hospital/patient-facing work, STEM tutoring, certifications, projects, and STEM-related leadership if present.\n"
                         "Do not invent details. Do not use generic labels like 'Health & Wellness' unless you explain the actual activity or specialization.\n"
@@ -1048,11 +1042,9 @@ def _ai_resume_feature_summary(resume_text: str, stem_statement: str) -> dict[st
                         "If little evidence exists, say that directly.\n\n"
                         f"Resume:\n{resume_text[:4500]}\n\n"
                         f"Personal statement context, only if useful:\n{stem_statement[:1200]}"
-                    ),
-                }
-            ],
+            ),
         )
-        raw = message.content[0].text.strip()
+        raw = message.strip()
         data = _parse_json_object(raw)
         experience = _clean_cell(str(data.get("experience", "")))
         skills = _clean_cell(str(data.get("skills", "")))
@@ -1289,22 +1281,14 @@ def _evaluate_cover_letter(text: str, fus_mentions: int) -> dict:
 
 
 def _ai_evaluate_cover_letter(text: str) -> dict | None:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key or api_key.lower() in {"dummy", "your_anthropic_api_key_here"}:
+    if not llm.is_configured():
         return None
 
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        message = llm.complete(
             max_tokens=700,
             temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
+            prompt=(
                         "Evaluate this cover letter for a Focused Ultrasound Lab high school research program.\n"
                         "Keep these criteria: strong opening explaining why they want the role; relevant skills/experience; concrete accomplishments; quantified impact; call to action; formal closing; professional brief format with contact information; addressed to a named person; personalization to the organization/program; and FUS lab relevance.\n\n"
                         "Additional strict restriction:\n"
@@ -1314,11 +1298,9 @@ def _ai_evaluate_cover_letter(text: str) -> dict | None:
                         "- If it does not reference the FUS lab/program at all, the maximum score is 6.\n\n"
                         "Return JSON only with keys: score, notes. score must be an integer 0-10. notes must be one concise sentence explaining the score and whether FUS understanding is present.\n\n"
                         f"Cover letter:\n{text[:5000]}"
-                    ),
-                }
-            ],
+            ),
         )
-        raw = message.content[0].text.strip()
+        raw = message.strip()
         data = _parse_json_object(raw)
         score = int(data.get("score", 0))
         notes = str(data.get("notes", "")).strip()
@@ -1690,32 +1672,22 @@ def _has_previous_research_experience(resume_text: str, stem_statement: str) -> 
 
 
 def _ai_has_previous_research_experience(resume_text: str, stem_statement: str) -> bool | None:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key or api_key.lower() in {"dummy", "your_anthropic_api_key_here"}:
+    if not llm.is_configured():
         return None
 
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        message = llm.complete(
             max_tokens=180,
             temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
+            prompt=(
                         "Decide whether this high school applicant has previous research experience.\n"
                         "Use only actual past experience from the resume or personal statement. Count clear evidence such as research assistant, research intern, lab research, independent research project, publication, poster, science fair research project, or documented experimental investigation.\n"
                         "Do NOT count: interest in research, applying to a research program, wanting hands-on experience, tutoring, normal class labs, observing someone else, or generic phrases like 'research projects' without a specific past project.\n"
                         "Return JSON only: {\"has_research_experience\": true/false, \"reason\": \"short reason\"}.\n\n"
                         f"Resume:\n{resume_text[:3500]}\n\nPersonal statement:\n{stem_statement[:2500]}"
-                    ),
-                }
-            ],
+            ),
         )
-        raw = message.content[0].text.strip()
+        raw = message.strip()
         data = _parse_json_object(raw)
         return bool(data.get("has_research_experience"))
     except Exception:
@@ -1744,30 +1716,20 @@ def _career_goals(text: str) -> str:
 
 
 def _ai_extract_career_goals(text: str) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key or api_key.lower() in {"dummy", "your_anthropic_api_key_here"}:
+    if not llm.is_configured():
         return ""
 
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        message = llm.complete(
             max_tokens=160,
             temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
+            prompt=(
                         "Extract the applicant's career goal from this personal statement. "
                         "Return one concise phrase or sentence only. If no career goal is stated, return an empty string.\n\n"
                         f"Personal statement:\n{text[:4000]}"
-                    ),
-                }
-            ],
+            ),
         )
-        return _clean_cell(message.content[0].text).strip('"')
+        return _clean_cell(message).strip('"')
     except Exception:
         return ""
 
@@ -1860,22 +1822,14 @@ def _evaluate_stem_statement(text: str) -> dict:
 
 
 def _ai_evaluate_stem_statement(text: str) -> dict | None:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key or api_key.lower() in {"dummy", "your_anthropic_api_key_here"}:
+    if not llm.is_configured():
         return None
 
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        message = llm.complete(
             max_tokens=700,
             temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
+            prompt=(
                         "Evaluate the applicant's STEM personal statement for a high school research program.\n"
                         "Score out of 10 using these sub-scores:\n"
                         "- General statement quality: 0-5. This includes answering: what they aspire to be/do, what motivates them to get involved in STEM, and why they are a valuable candidate. Award high marks only when these are specific, evidenced, and clearly written.\n"
@@ -1895,11 +1849,9 @@ def _ai_evaluate_stem_statement(text: str) -> dict | None:
                         "Ignore form instructions/template text. Evaluate only the applicant's answer.\n"
                         "Return JSON only with keys: score, notes. score must be an integer 0-10. notes must be one concise sentence explaining the score.\n\n"
                         f"Statement:\n{text[:5000]}"
-                    ),
-                }
-            ],
+            ),
         )
-        raw = message.content[0].text.strip()
+        raw = message.strip()
         data = _parse_json_object(raw)
         score = int(data.get("score", 0))
         notes = str(data.get("notes", "")).strip()

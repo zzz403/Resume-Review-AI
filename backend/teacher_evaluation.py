@@ -1,8 +1,8 @@
-import base64
 import io
 import json
-import os
 import re
+
+import llm
 
 
 def extract_teacher_evaluation_profile(filename: str, text: str, content: bytes | None = None) -> dict:
@@ -118,8 +118,7 @@ def _looks_like_scanned_teacher_evaluation(content: bytes | None) -> bool:
 
 
 def _ai_extract_teacher_evaluation_from_image(content: bytes | None) -> dict:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not content or not api_key or api_key.lower() in {"dummy", "your_anthropic_api_key_here"}:
+    if not content or not llm.is_configured():
         return {}
 
     image_data = _teacher_evaluation_first_page_png(content)
@@ -127,41 +126,19 @@ def _ai_extract_teacher_evaluation_from_image(content: bytes | None) -> dict:
         return {}
 
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        message = llm.complete(
+            (
+                "Read this teacher evaluation form image. Extract only visible handwritten or typed form values. "
+                "Return JSON only with keys: student_name, academic_ranking, total_score. "
+                "academic_ranking must be one of Top 5%, Top 10%, Top 15%, Top 20%, Top 25%, or empty. "
+                "total_score must look like 49/50 or 50/50, or empty if not legible. "
+                "Do not infer or guess unclear handwritten numbers."
+            ),
             max_tokens=300,
             temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": base64.b64encode(image_data).decode("ascii"),
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": (
-                                "Read this teacher evaluation form image. Extract only visible handwritten or typed form values. "
-                                "Return JSON only with keys: student_name, academic_ranking, total_score. "
-                                "academic_ranking must be one of Top 5%, Top 10%, Top 15%, Top 20%, Top 25%, or empty. "
-                                "total_score must look like 49/50 or 50/50, or empty if not legible. "
-                                "Do not infer or guess unclear handwritten numbers."
-                            ),
-                        },
-                    ],
-                }
-            ],
+            image_png=image_data,
         )
-        raw = message.content[0].text.strip()
-        return _parse_json_object(raw)
+        return _parse_json_object(message.strip())
     except Exception:
         return {}
 
@@ -386,32 +363,22 @@ def _summarize_teacher_comments(text: str) -> str:
 
 
 def _ai_summarize_teacher_comments(comments: str, improvement: str) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key or api_key.lower() in {"dummy", "your_anthropic_api_key_here"}:
+    if not llm.is_configured():
         return ""
 
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        message = llm.complete(
+            (
+                "Summarize this teacher evaluation comment for an applicant review spreadsheet.\n"
+                "Do not use a keyword checklist. Include whatever the teacher actually says, positive or negative.\n"
+                "Capture strengths, concerns, and any stated area for improvement. Do not invent details.\n"
+                "Write 1-2 concise sentences, maximum 70 words. Return only the summary.\n\n"
+                f"Further comments:\n{comments[:3000]}\n\nArea for improvement:\n{improvement[:1200]}"
+            ),
             max_tokens=220,
             temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Summarize this teacher evaluation comment for an applicant review spreadsheet.\n"
-                        "Do not use a keyword checklist. Include whatever the teacher actually says, positive or negative.\n"
-                        "Capture strengths, concerns, and any stated area for improvement. Do not invent details.\n"
-                        "Write 1-2 concise sentences, maximum 70 words. Return only the summary.\n\n"
-                        f"Further comments:\n{comments[:3000]}\n\nArea for improvement:\n{improvement[:1200]}"
-                    ),
-                }
-            ],
         )
-        return _limit_words(_clean_cell(message.content[0].text).strip('"'), 70)
+        return _limit_words(_clean_cell(message).strip('"'), 70)
     except Exception:
         return ""
 
