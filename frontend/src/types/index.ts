@@ -38,7 +38,15 @@ export interface ClearApplicationDataResponse {
   excel_path: string
 }
 
-export interface AnthropicKeyResponse {
+export interface LlmSettings {
+  provider: string
+  configured: boolean
+  available_providers: string[]
+}
+
+export interface LlmSaveResponse {
+  provider: string
+  configured: boolean
   message: string
   key_preview: string
 }

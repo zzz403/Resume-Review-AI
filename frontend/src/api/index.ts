@@ -1,8 +1,9 @@
 import type {
   ApplicationSubmitResponse,
-  AnthropicKeyResponse,
   ClearApplicationDataResponse,
   ExtractResponse,
+  LlmSettings,
+  LlmSaveResponse,
   Review,
   ReviewResponse,
   TeacherEvaluationSubmitResponse,
@@ -40,15 +41,21 @@ export async function clearApplicationData(): Promise<ClearApplicationDataRespon
   return res.json()
 }
 
-export async function saveAnthropicKey(apiKey: string): Promise<AnthropicKeyResponse> {
-  const res = await fetch(`${API_BASE}/settings/anthropic-key`, {
+export async function getLlmSettings(): Promise<LlmSettings> {
+  const res = await fetch(`${API_BASE}/settings/llm`)
+  if (!res.ok) throw new Error('Failed to load LLM settings')
+  return res.json()
+}
+
+export async function saveLlmSettings(provider: string, apiKey: string): Promise<LlmSaveResponse> {
+  const res = await fetch(`${API_BASE}/settings/llm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ api_key: apiKey }),
+    body: JSON.stringify({ provider, api_key: apiKey }),
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(data.detail ?? 'Failed to save Anthropic API key')
+    throw new Error(data.detail ?? 'Failed to save LLM settings')
   }
   return res.json()
 }

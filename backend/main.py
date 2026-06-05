@@ -10,6 +10,7 @@ from pydantic import BaseModel
 ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(ENV_PATH)
 
+import llm
 from application_profile import extract_application_profile
 from ai import review_resume
 from db import save_review, fetch_history
@@ -35,7 +36,8 @@ class ReviewRequest(BaseModel):
     resume_text: str
 
 
-class AnthropicKeyRequest(BaseModel):
+class LLMSettingsRequest(BaseModel):
+    provider: str
     api_key: str
 
 
@@ -108,17 +110,41 @@ def delete_application_data():
         "excel_path": cleared["excel_path"],
     }
 
-@app.post("/settings/anthropic-key")
-def save_anthropic_key(request: AnthropicKeyRequest):
-    api_key = request.api_key.strip()
-    if not api_key.startswith("sk-ant-"):
-        raise HTTPException(status_code=400, detail="This does not look like an Anthropic API key. It should start with sk-ant-.")
-
-    _validate_anthropic_key(api_key)
-    _write_env_value("ANTHROPIC_API_KEY", api_key)
-    os.environ["ANTHROPIC_API_KEY"] = api_key
+@app.get("/settings/llm")
+def get_llm_settings():
+    provider = llm.get_provider()
     return {
-        "message": "Anthropic API key is valid and saved.",
+        "provider": provider,
+        "configured": llm.is_configured(provider),
+        "available_providers": llm.available_providers(),
+    }
+
+
+@app.post("/settings/llm")
+def save_llm_settings(request: LLMSettingsRequest):
+    provider = request.provider.strip().lower()
+    if provider not in llm.available_providers():
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}. Choose one of {llm.available_providers()}.")
+
+    api_key = request.api_key.strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key is required.")
+
+    try:
+        llm.validate_key(api_key, provider=provider)
+    except llm.LLMAuthError as exc:
+        raise HTTPException(status_code=400, detail=f"The {provider} API key was rejected. Check the key and try again.") from exc
+    except llm.LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not validate the {provider} API key: {exc}") from exc
+
+    _write_env_value("LLM_PROVIDER", provider)
+    _write_env_value(llm.provider_key_env(provider), api_key)
+    os.environ["LLM_PROVIDER"] = provider
+    os.environ[llm.provider_key_env(provider)] = api_key
+    return {
+        "provider": provider,
+        "configured": True,
+        "message": f"{provider} API key is valid and saved.",
         "key_preview": _key_preview(api_key),
     }
 
@@ -164,25 +190,6 @@ def _clear_teacher_evaluation_files() -> list[str]:
         path.unlink()
         removed.append(str(path))
     return removed
-
-
-def _validate_anthropic_key(api_key: str) -> None:
-    try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=5,
-            temperature=0,
-            messages=[{"role": "user", "content": "Reply OK."}],
-        )
-    except Exception as exc:
-        status_code = getattr(exc, "status_code", None)
-        message = str(exc).lower()
-        if status_code == 401 or "authentication" in message or "invalid x-api-key" in message:
-            raise HTTPException(status_code=400, detail="Anthropic API key is not valid. Create a new key in Anthropic Console and try again.") from exc
-        raise HTTPException(status_code=502, detail="Could not validate the Anthropic API key. Check internet connection, billing/access, then try again.") from exc
 
 
 def _write_env_value(key: str, value: str) -> None:

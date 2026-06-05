@@ -1,8 +1,20 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { UploadPanel } from './components/UploadPanel'
 import { HistoryList } from './components/HistoryList'
-import { clearApplicationData, getHistory, saveAnthropicKey, submitApplication, submitTeacherEvaluation } from './api'
+import { clearApplicationData, getHistory, getLlmSettings, saveLlmSettings, submitApplication, submitTeacherEvaluation } from './api'
 import type { ApplicationSubmitResponse, Review, TeacherEvaluationSubmitResponse } from './types'
+
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: 'Anthropic (Claude)',
+  deepseek: 'DeepSeek',
+  gemini: 'Google Gemini',
+}
+
+const KEY_PLACEHOLDERS: Record<string, string> = {
+  anthropic: 'Paste sk-ant-... key',
+  deepseek: 'Paste sk-... key',
+  gemini: 'Paste AIza... key',
+}
 
 export default function App() {
   const [fileName, setFileName] = useState<string | null>(null)
@@ -14,11 +26,26 @@ export default function App() {
   const [submittingTeacherEvaluation, setSubmittingTeacherEvaluation] = useState(false)
   const [clearingData, setClearingData] = useState(false)
   const [clearMessage, setClearMessage] = useState<string | null>(null)
+  const [availableProviders, setAvailableProviders] = useState<string[]>(['anthropic', 'deepseek', 'gemini'])
+  const [provider, setProvider] = useState('anthropic')
+  const [activeProvider, setActiveProvider] = useState<string | null>(null)
+  const [providerConfigured, setProviderConfigured] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [savingApiKey, setSavingApiKey] = useState(false)
   const [apiKeyMessage, setApiKeyMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [view, setView] = useState<'main' | 'history'>('main')
+
+  useEffect(() => {
+    getLlmSettings()
+      .then((settings) => {
+        if (settings.available_providers?.length) setAvailableProviders(settings.available_providers)
+        setProvider(settings.provider)
+        setActiveProvider(settings.provider)
+        setProviderConfigured(settings.configured)
+      })
+      .catch(() => {})
+  }, [])
 
   async function handleFileSelect(file: File) {
     setFileName(file.name)
@@ -85,12 +112,14 @@ export default function App() {
     setApiKeyMessage(null)
     setSavingApiKey(true)
     try {
-      const response = await saveAnthropicKey(apiKey)
+      const response = await saveLlmSettings(provider, apiKey)
       setApiKey('')
+      setActiveProvider(response.provider)
+      setProviderConfigured(response.configured)
       setApiKeyMessage(`${response.message} (${response.key_preview})`)
     } catch (err) {
       setApiKeyMessage(null)
-      setError(err instanceof Error ? err.message : 'Anthropic API key could not be saved.')
+      setError(err instanceof Error ? err.message : 'LLM provider key could not be saved.')
     } finally {
       setSavingApiKey(false)
     }
@@ -143,14 +172,34 @@ export default function App() {
           <div className="panel result-panel output-panel">
             <p className="label">Application Output</p>
             <div className="settings-box">
-              <p className="score-label">Anthropic API Key</p>
+              <p className="score-label">AI Provider</p>
+              {activeProvider && (
+                <p className="placeholder">
+                  Active: {PROVIDER_LABELS[activeProvider] ?? activeProvider}
+                  {' — '}
+                  {providerConfigured ? '✓ key configured' : '⚠ no key set'}
+                </p>
+              )}
+              <div className="settings-row">
+                <select
+                  className="text-input"
+                  value={provider}
+                  onChange={(event) => setProvider(event.target.value)}
+                >
+                  {availableProviders.map((name) => (
+                    <option key={name} value={name}>
+                      {PROVIDER_LABELS[name] ?? name}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="settings-row">
                 <input
                   className="text-input"
                   type="password"
                   value={apiKey}
                   onChange={(event) => setApiKey(event.target.value)}
-                  placeholder="Paste sk-ant-... key"
+                  placeholder={KEY_PLACEHOLDERS[provider] ?? 'Paste API key'}
                   autoComplete="off"
                 />
                 <button

@@ -54,6 +54,15 @@ def get_provider() -> str:
     return provider if provider in _PROVIDERS else "anthropic"
 
 
+def available_providers() -> list[str]:
+    return list(_PROVIDERS)
+
+
+def provider_key_env(provider: str) -> str:
+    """Name of the env var that holds the API key for the given provider."""
+    return _PROVIDERS[provider][0]
+
+
 def _api_key(provider: str | None = None) -> str:
     provider = provider or get_provider()
     return os.getenv(_PROVIDERS[provider][0], "").strip()
