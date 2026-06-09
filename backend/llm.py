@@ -1,10 +1,12 @@
 """Provider-agnostic LLM interface.
 
-Switch providers with the LLM_PROVIDER env var: "anthropic" (default),
-"deepseek", or "gemini". Each provider reads its own API key and (optionally)
+Switch text providers with TEXT_LLM_PROVIDER or LLM_PROVIDER: "anthropic" (default),
+"deepseek", "gemini", or "openai". Switch image-reading providers with
+VISION_LLM_PROVIDER. Each provider reads its own API key and (optionally)
 its own model override:
 
-    LLM_PROVIDER=deepseek
+    TEXT_LLM_PROVIDER=anthropic
+    VISION_LLM_PROVIDER=openai
     DEEPSEEK_API_KEY=sk-...
     DEEPSEEK_MODEL=deepseek-chat        # optional override
 
@@ -25,7 +27,10 @@ _PROVIDERS = {
     "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
     "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "deepseek-chat"),
     "gemini": ("GEMINI_API_KEY", "GEMINI_MODEL", "gemini-2.0-flash"),
+    "openai": ("OPENAI_API_KEY", "OPENAI_MODEL", "gpt-5.5"),
 }
+
+_VISION_PROVIDERS = {"anthropic", "gemini", "openai"}
 
 _PLACEHOLDER_KEYS = {
     "",
@@ -33,6 +38,7 @@ _PLACEHOLDER_KEYS = {
     "your_anthropic_api_key_here",
     "your_deepseek_api_key_here",
     "your_gemini_api_key_here",
+    "your_openai_api_key_here",
     "your_api_key_here",
 }
 
@@ -49,13 +55,33 @@ class LLMAuthError(LLMError):
     """Raised when the provider rejects the API key."""
 
 
-def get_provider() -> str:
-    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+def _valid_provider(value: str, default: str = "anthropic") -> str:
+    provider = value.strip().lower()
     return provider if provider in _PROVIDERS else "anthropic"
+
+
+def get_provider() -> str:
+    return get_text_provider()
+
+
+def get_text_provider() -> str:
+    return _valid_provider(os.getenv("TEXT_LLM_PROVIDER") or os.getenv("LLM_PROVIDER", "anthropic"))
+
+
+def get_vision_provider() -> str:
+    configured = os.getenv("VISION_LLM_PROVIDER", "").strip().lower()
+    if configured in _VISION_PROVIDERS:
+        return configured
+    text_provider = get_text_provider()
+    return text_provider if text_provider in _VISION_PROVIDERS else "anthropic"
 
 
 def available_providers() -> list[str]:
     return list(_PROVIDERS)
+
+
+def available_vision_providers() -> list[str]:
+    return [provider for provider in _PROVIDERS if provider in _VISION_PROVIDERS]
 
 
 def provider_key_env(provider: str) -> str:
@@ -92,7 +118,29 @@ def complete(
     Returns the model's text output. Raises LLMNotConfigured when no key is set,
     LLMAuthError when the key is rejected, or LLMError for any other failure.
     """
-    provider = get_provider()
+    provider = get_text_provider()
+    return _complete_with_provider(provider, prompt, max_tokens=max_tokens, temperature=temperature, image_png=image_png)
+
+
+def complete_vision(
+    prompt: str,
+    *,
+    max_tokens: int,
+    temperature: float = 0.0,
+    image_png: bytes,
+) -> str:
+    provider = get_vision_provider()
+    return _complete_with_provider(provider, prompt, max_tokens=max_tokens, temperature=temperature, image_png=image_png)
+
+
+def _complete_with_provider(
+    provider: str,
+    prompt: str,
+    *,
+    max_tokens: int,
+    temperature: float,
+    image_png: bytes | None = None,
+) -> str:
     if not is_configured(provider):
         raise LLMNotConfigured(f"{provider} API key is not configured.")
 
@@ -102,12 +150,14 @@ def complete(
         return _deepseek_complete(prompt, max_tokens, temperature, image_png)
     if provider == "gemini":
         return _gemini_complete(prompt, max_tokens, temperature, image_png)
+    if provider == "openai":
+        return _openai_complete(prompt, max_tokens, temperature, image_png)
     raise LLMNotConfigured(f"Unknown LLM provider: {provider}")
 
 
 def validate_key(api_key: str, provider: str | None = None) -> None:
     """Send a tiny request to confirm the key works. Raises on failure."""
-    provider = provider or get_provider()
+    provider = provider or get_text_provider()
     prev = os.environ.get(_PROVIDERS[provider][0])
     os.environ[_PROVIDERS[provider][0]] = api_key.strip()
     prev_provider = os.environ.get("LLM_PROVIDER")
@@ -203,6 +253,32 @@ def _gemini_complete(prompt: str, max_tokens: int, temperature: float, image_png
     except Exception as exc:  # noqa: BLE001
         raise _normalize_error(exc) from exc
     return resp.text or ""
+
+
+def _openai_complete(prompt: str, max_tokens: int, temperature: float, image_png: bytes | None) -> str:
+    from openai import OpenAI
+
+    client = OpenAI(api_key=_api_key("openai"))
+    content: list[dict[str, str]] = [{"type": "input_text", "text": prompt}]
+    if image_png is not None:
+        encoded = base64.b64encode(image_png).decode("ascii")
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{encoded}",
+            }
+        )
+
+    try:
+        resp = client.responses.create(
+            model=_model("openai"),
+            input=[{"role": "user", "content": content}],
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise _normalize_error(exc) from exc
+    return resp.output_text or ""
 
 
 def _normalize_error(exc: Exception) -> LLMError:

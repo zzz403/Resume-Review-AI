@@ -47,11 +47,11 @@ export async function getLlmSettings(): Promise<LlmSettings> {
   return res.json()
 }
 
-export async function saveLlmSettings(provider: string, apiKey: string): Promise<LlmSaveResponse> {
+export async function saveLlmSettings(provider: string, apiKey: string, role: 'text' | 'vision' = 'text'): Promise<LlmSaveResponse> {
   const res = await fetch(`${API_BASE}/settings/llm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ provider, api_key: apiKey }),
+    body: JSON.stringify({ provider, api_key: apiKey, role }),
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))

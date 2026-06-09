@@ -41,11 +41,17 @@ export interface ClearApplicationDataResponse {
 export interface LlmSettings {
   provider: string
   configured: boolean
+  text_provider: string
+  text_configured: boolean
+  vision_provider: string
+  vision_configured: boolean
   available_providers: string[]
+  available_vision_providers: string[]
 }
 
 export interface LlmSaveResponse {
   provider: string
+  role: 'text' | 'vision'
   configured: boolean
   message: string
   key_preview: string

@@ -4,6 +4,47 @@ This program helps review high school summer program applications for the Focuse
 
 The program is designed for the real application workflow, where applicants may upload documents in different orders or formats. The expected order is usually cover letter, resume/CV, Sunnybrook Focused Ultrasound Lab Summer Program form, and transcript, but the program does not depend only on that order. It searches for recognizable section content and form titles.
 
+## How To Open The App
+
+1. On Mac, double-click `start_app.command`.
+2. On Windows, double-click `start_app.bat`.
+3. Wait for the browser window to open.
+4. If the browser does not open automatically, go to:
+
+http://127.0.0.1:3000/
+
+Keep the Terminal or Command Prompt window open while using the app. Closing it stops the app.
+
+### Mac
+
+1. Open the `Resume-Review-AI` folder.
+2. Double-click `start_app.command`.
+
+### Windows
+
+1. Open the `Resume-Review-AI` folder.
+2. Double-click `start_app.bat`.
+3. Wait for the browser window to open.
+4. If Windows asks for permission, choose to allow it.
+5. If the browser does not open automatically, go to:
+
+http://127.0.0.1:3000/
+
+## Using ChatGPT/OpenAI For Image Reading
+
+The app can use OpenAI vision models to read scanned or image-based application pages when normal PDF text extraction and OCR are not reliable.
+
+1. Open the app.
+2. In `AI Providers`, choose `Image Reading AI`.
+3. Choose `OpenAI (ChatGPT)`, `Anthropic (Claude)`, or `Google Gemini`.
+4. Paste the matching API key.
+5. Click `Save Key`.
+6. Upload the application or teacher evaluation again.
+
+When key fields are missing or suspicious, the app will try AI image reading as a fallback. This is intended for scanned forms, handwritten teacher evaluations, checkbox rankings, and hard-to-read PDF pages. Clear typed PDFs still use normal extraction first because it is faster and cheaper.
+
+You do not need two API keys unless you want separate providers. For example, you can use OpenAI for both text scoring and image reading, or Anthropic/Gemini for both. DeepSeek can be used for text scoring, but not for image reading.
+
 ## Extraction Method
 
 - The program first tries normal PDF or DOCX text extraction.
@@ -11,7 +52,7 @@ The program is designed for the real application workflow, where applicants may 
 - OCR uses high-resolution PDF rendering and `pytesseract`.
 - OCR can help with scanned forms, but handwritten text is still less reliable than typed text.
 - For teacher evaluation checkboxes, the program can use visual checkbox detection when text extraction does not clearly show the selected ranking.
-- For some scanned or handwritten teacher evaluation fields, the program can use AI vision if the Anthropic API key is configured.
+- For some scanned or handwritten application and teacher evaluation fields, the program can use AI vision if a vision-capable AI provider key is configured.
 - If a field cannot be read reliably, the program leaves the value blank and writes a note in the relevant note column.
 - AI is used when available for more flexible summary/evaluation tasks, such as resume feature summaries, STEM statement scoring, career goals, previous research experience, and teacher comment summaries.
 - If the API key is missing or invalid, the program falls back to rule-based or text-based extraction where possible.
@@ -105,20 +146,25 @@ The program is designed for the real application workflow, where applicants may 
   - Scores the cover letter out of 10.
   - Source: detected cover letter section.
   - Method: uses AI if available; otherwise uses a fallback rubric.
-  - Criteria include:
-    - strong opening explaining interest in the role
-    - relevant skills or experience
-    - concrete accomplishments
-    - quantified impact
-    - call to action
-    - formal closing
-    - professional format and contact information
-    - addressed to a named person
-    - personalization to Sunnybrook/FUS/program
-    - FUS lab relevance
-  - Important scoring cap:
-    - If the applicant only names Sunnybrook/FUS without showing understanding of what the lab does, the score is capped.
-    - If the letter does not reference the program or lab, the score is capped lower.
+  - AI rubric:
+    - Scores the same general criteria as the fallback rubric, but asks the AI to judge the letter more flexibly.
+    - Criteria include a strong opening explaining why the applicant wants the role, relevant skills/experience, concrete accomplishments, quantified impact, call to action, formal closing, professional brief format with contact information, named addressee, personalization to the organization/program, and FUS lab relevance.
+    - To score 8-10, the letter must show some understanding of what the FUS lab does. Examples include focused ultrasound research, non-invasive therapy/treatment, biomedical imaging, device/technology development, brain or cancer applications, experimental work, MRI guidance, ablation, drug delivery, nanoparticles, microbubbles, sonodynamic therapy, neurostimulation, or other specific lab-relevant work.
+    - If the letter mentions the program but does not show what the FUS lab does, the maximum score is 7.
+    - If the letter does not reference the FUS lab/program at all, the maximum score is 6.
+  - Fallback rubric, used when AI is unavailable:
+    - 1 point for an opening that shows interest in the opportunity.
+    - 1 point for relevant skills or experience.
+    - 1 point for examples or accomplishments.
+    - 1 point for quantified impact, such as a number of students, people, patients, projects, hours, weeks, months, years, members, or participants.
+    - 1 point for a closing call to action.
+    - 1 point for a formal closing, such as `sincerely`, `regards`, or `thank you`.
+    - 1 point for professional brief format with contact information.
+    - 1 point for addressing a named reader.
+    - 1 point for personalization to Sunnybrook, FUS, Focused Ultrasound, or the research program.
+    - 1 point for showing understanding of FUS lab work.
+    - If the applicant references the program but does not show FUS understanding, the fallback score is capped at 7.
+    - If the applicant does not reference the program, the fallback score is capped at 6.
 
 - `Reference to FUS`
   - Records whether the applicant mentions focused ultrasound/FUS.
@@ -128,7 +174,7 @@ The program is designed for the real application workflow, where applicants may 
 - `fus_understanding_summary`
   - Summarizes whether the applicant shows understanding of FUS.
   - Source: cover letter and STEM statement.
-  - Method: checks whether the applicant uses lab-relevant concept categories such as non-invasive treatment, imaging/guidance, biomedical/medical application, device/technology development, acoustics/sonication, brain/neuroscience application, cancer/tumor application, or preclinical/experimental research.
+  - Method: checks whether the applicant uses lab-relevant concept categories such as non-invasive treatment, imaging/guidance, MRI, biomedical/medical or clinical application, device/technology development, acoustics/sonication, sonodynamic therapy, brain/neuroscience application, neurostimulation, cancer/tumor application, drug delivery, nanoparticles, microbubbles, or preclinical/experimental research.
 
 - `FUS Understanding Rate (/5)`
   - Rates the applicant's FUS understanding.
@@ -148,14 +194,26 @@ The program is designed for the real application workflow, where applicants may 
   - Scores the resume out of 10.
   - Source: detected resume/CV section.
   - Method: rule-based resume rubric.
-  - Criteria include:
-    - work, volunteering, internship, tutoring, or assistant experience
-    - useful detail about actions taken
-    - FUS/lab/biomedical relevance where present
-    - clear education section
-    - relevant skills
-    - awards, accomplishments, or certifications
-    - concise and readable format
+  - Rating scale:
+    - Experience is worth up to 3 points.
+      - 0 points if relevant work, volunteering, internship, tutoring, or assistant experience is not clearly listed.
+      - 1 point if experience is present.
+      - 1 additional point if the experience includes useful action/detail, such as developed, facilitated, assisted, organized, collaborated, supported, helped, promoted, or quantified impact.
+      - 1 additional point if the experience has FUS/lab/biomedical relevance, such as focused ultrasound, ultrasound, biomedical imaging, medical device, device development, non-invasive technology, acoustics, transducers, lab research, research assistant, or research intern.
+    - Education is worth up to 1 point.
+      - 1 point if education is clearly listed with terms such as `High School Diploma`, `Secondary School`, `Education`, or `Expected in`.
+    - Skills are worth up to 2 points.
+      - 0 points if no skills section or relevant skills are clearly detected.
+      - 1 point if skills are present but generic or weakly connected to the program.
+      - 2 points if at least 3 relevant skill terms are found, such as biology, chemistry, physics, computer, programming, problem-solving, critical thinking, communication, teamwork, or OCRA.
+    - Awards/accomplishments/certifications are worth up to 1 point.
+      - 1 point if relevant awards, accomplishments, certifications, certificates, OCRA, or science/math/biology/chemistry/physics-related achievements are clearly listed.
+    - Format and conciseness are worth up to 3 points.
+      - 3 points for a plain, simple, likely one-page resume.
+      - 2 points for an acceptable resume that could be cleaner or more concise.
+      - 1 point for a weak format.
+      - 0 points if the resume appears to be more than one page or has too many bullet points under one experience.
+    - The final score is capped at 10.
 
 - `features`
   - Summarizes STEM-relevant resume features.

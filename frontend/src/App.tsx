@@ -8,12 +8,14 @@ const PROVIDER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic (Claude)',
   deepseek: 'DeepSeek',
   gemini: 'Google Gemini',
+  openai: 'OpenAI (ChatGPT)',
 }
 
 const KEY_PLACEHOLDERS: Record<string, string> = {
   anthropic: 'Paste sk-ant-... key',
   deepseek: 'Paste sk-... key',
   gemini: 'Paste AIza... key',
+  openai: 'Paste sk-... key',
 }
 
 export default function App() {
@@ -26,12 +28,18 @@ export default function App() {
   const [submittingTeacherEvaluation, setSubmittingTeacherEvaluation] = useState(false)
   const [clearingData, setClearingData] = useState(false)
   const [clearMessage, setClearMessage] = useState<string | null>(null)
-  const [availableProviders, setAvailableProviders] = useState<string[]>(['anthropic', 'deepseek', 'gemini'])
-  const [provider, setProvider] = useState('anthropic')
-  const [activeProvider, setActiveProvider] = useState<string | null>(null)
-  const [providerConfigured, setProviderConfigured] = useState(false)
-  const [apiKey, setApiKey] = useState('')
-  const [savingApiKey, setSavingApiKey] = useState(false)
+  const [availableProviders, setAvailableProviders] = useState<string[]>(['anthropic', 'deepseek', 'gemini', 'openai'])
+  const [availableVisionProviders, setAvailableVisionProviders] = useState<string[]>(['anthropic', 'gemini', 'openai'])
+  const [textProvider, setTextProvider] = useState('anthropic')
+  const [visionProvider, setVisionProvider] = useState('anthropic')
+  const [activeTextProvider, setActiveTextProvider] = useState<string | null>(null)
+  const [activeVisionProvider, setActiveVisionProvider] = useState<string | null>(null)
+  const [textProviderConfigured, setTextProviderConfigured] = useState(false)
+  const [visionProviderConfigured, setVisionProviderConfigured] = useState(false)
+  const [textApiKey, setTextApiKey] = useState('')
+  const [visionApiKey, setVisionApiKey] = useState('')
+  const [savingTextApiKey, setSavingTextApiKey] = useState(false)
+  const [savingVisionApiKey, setSavingVisionApiKey] = useState(false)
   const [apiKeyMessage, setApiKeyMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [view, setView] = useState<'main' | 'history'>('main')
@@ -40,9 +48,13 @@ export default function App() {
     getLlmSettings()
       .then((settings) => {
         if (settings.available_providers?.length) setAvailableProviders(settings.available_providers)
-        setProvider(settings.provider)
-        setActiveProvider(settings.provider)
-        setProviderConfigured(settings.configured)
+        if (settings.available_vision_providers?.length) setAvailableVisionProviders(settings.available_vision_providers)
+        setTextProvider(settings.text_provider ?? settings.provider)
+        setVisionProvider(settings.vision_provider ?? settings.provider)
+        setActiveTextProvider(settings.text_provider ?? settings.provider)
+        setActiveVisionProvider(settings.vision_provider ?? settings.provider)
+        setTextProviderConfigured(settings.text_configured ?? settings.configured)
+        setVisionProviderConfigured(settings.vision_configured ?? settings.configured)
       })
       .catch(() => {})
   }, [])
@@ -107,21 +119,39 @@ export default function App() {
     }
   }
 
-  async function handleSaveApiKey() {
+  async function handleSaveTextApiKey() {
     setError(null)
     setApiKeyMessage(null)
-    setSavingApiKey(true)
+    setSavingTextApiKey(true)
     try {
-      const response = await saveLlmSettings(provider, apiKey)
-      setApiKey('')
-      setActiveProvider(response.provider)
-      setProviderConfigured(response.configured)
+      const response = await saveLlmSettings(textProvider, textApiKey, 'text')
+      setTextApiKey('')
+      setActiveTextProvider(response.provider)
+      setTextProviderConfigured(response.configured)
       setApiKeyMessage(`${response.message} (${response.key_preview})`)
     } catch (err) {
       setApiKeyMessage(null)
       setError(err instanceof Error ? err.message : 'LLM provider key could not be saved.')
     } finally {
-      setSavingApiKey(false)
+      setSavingTextApiKey(false)
+    }
+  }
+
+  async function handleSaveVisionApiKey() {
+    setError(null)
+    setApiKeyMessage(null)
+    setSavingVisionApiKey(true)
+    try {
+      const response = await saveLlmSettings(visionProvider, visionApiKey, 'vision')
+      setVisionApiKey('')
+      setActiveVisionProvider(response.provider)
+      setVisionProviderConfigured(response.configured)
+      setApiKeyMessage(`${response.message} (${response.key_preview})`)
+    } catch (err) {
+      setApiKeyMessage(null)
+      setError(err instanceof Error ? err.message : 'Image reading provider key could not be saved.')
+    } finally {
+      setSavingVisionApiKey(false)
     }
   }
 
@@ -172,44 +202,91 @@ export default function App() {
           <div className="panel result-panel output-panel">
             <p className="label">Application Output</p>
             <div className="settings-box">
-              <p className="score-label">AI Provider</p>
-              {activeProvider && (
+              <p className="score-label">AI Providers</p>
+              {activeTextProvider && (
                 <p className="placeholder">
-                  Active: {PROVIDER_LABELS[activeProvider] ?? activeProvider}
+                  Text: {PROVIDER_LABELS[activeTextProvider] ?? activeTextProvider}
                   {' — '}
-                  {providerConfigured ? '✓ key configured' : '⚠ no key set'}
+                  {textProviderConfigured ? '✓ key configured' : '⚠ no key set'}
                 </p>
               )}
-              <div className="settings-row">
-                <select
-                  className="text-input"
-                  value={provider}
-                  onChange={(event) => setProvider(event.target.value)}
-                >
-                  {availableProviders.map((name) => (
-                    <option key={name} value={name}>
-                      {PROVIDER_LABELS[name] ?? name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="settings-row">
-                <input
-                  className="text-input"
-                  type="password"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={KEY_PLACEHOLDERS[provider] ?? 'Paste API key'}
-                  autoComplete="off"
-                />
-                <button
-                  className="btn-secondary"
-                  type="button"
-                  onClick={handleSaveApiKey}
-                  disabled={savingApiKey || !apiKey.trim()}
-                >
-                  {savingApiKey ? 'Checking...' : 'Save Key'}
-                </button>
+              {activeVisionProvider && (
+                <p className="placeholder">
+                  Image reading: {PROVIDER_LABELS[activeVisionProvider] ?? activeVisionProvider}
+                  {' — '}
+                  {visionProviderConfigured ? '✓ key configured' : '⚠ no key set'}
+                </p>
+              )}
+              <div className="provider-grid">
+                <div className="provider-control">
+                  <div className="provider-heading">
+                    <p className="score-label">Text AI</p>
+                  </div>
+                  <select
+                    className="text-input"
+                    value={textProvider}
+                    onChange={(event) => setTextProvider(event.target.value)}
+                  >
+                    {availableProviders.map((name) => (
+                      <option key={name} value={name}>
+                        {PROVIDER_LABELS[name] ?? name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="settings-row">
+                    <input
+                      className="text-input"
+                      type="password"
+                      value={textApiKey}
+                      onChange={(event) => setTextApiKey(event.target.value)}
+                      placeholder={KEY_PLACEHOLDERS[textProvider] ?? 'Paste API key'}
+                      autoComplete="off"
+                    />
+                    <button
+                      className="btn-secondary"
+                      type="button"
+                      onClick={handleSaveTextApiKey}
+                      disabled={savingTextApiKey || !textApiKey.trim()}
+                    >
+                      {savingTextApiKey ? 'Checking...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+                <div className="provider-control">
+                  <div className="provider-heading">
+                    <p className="score-label">Image Reading AI</p>
+                    <span className="recommended-pill">Recommend ChatGPT</span>
+                  </div>
+                  <select
+                    className="text-input"
+                    value={visionProvider}
+                    onChange={(event) => setVisionProvider(event.target.value)}
+                  >
+                    {availableVisionProviders.map((name) => (
+                      <option key={name} value={name}>
+                        {PROVIDER_LABELS[name] ?? name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="settings-row">
+                    <input
+                      className="text-input"
+                      type="password"
+                      value={visionApiKey}
+                      onChange={(event) => setVisionApiKey(event.target.value)}
+                      placeholder={KEY_PLACEHOLDERS[visionProvider] ?? 'Paste API key'}
+                      autoComplete="off"
+                    />
+                    <button
+                      className="btn-secondary"
+                      type="button"
+                      onClick={handleSaveVisionApiKey}
+                      disabled={savingVisionApiKey || !visionApiKey.trim()}
+                    >
+                      {savingVisionApiKey ? 'Checking...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
               </div>
               {apiKeyMessage && <p className="success-text">{apiKeyMessage}</p>}
             </div>

@@ -39,6 +39,7 @@ class ReviewRequest(BaseModel):
 class LLMSettingsRequest(BaseModel):
     provider: str
     api_key: str
+    role: str = "text"
 
 
 RESUME_REVIEW_DIR = Path(__file__).resolve().parents[2]
@@ -112,11 +113,17 @@ def delete_application_data():
 
 @app.get("/settings/llm")
 def get_llm_settings():
-    provider = llm.get_provider()
+    text_provider = llm.get_text_provider()
+    vision_provider = llm.get_vision_provider()
     return {
-        "provider": provider,
-        "configured": llm.is_configured(provider),
+        "provider": text_provider,
+        "configured": llm.is_configured(text_provider),
+        "text_provider": text_provider,
+        "text_configured": llm.is_configured(text_provider),
+        "vision_provider": vision_provider,
+        "vision_configured": llm.is_configured(vision_provider),
         "available_providers": llm.available_providers(),
+        "available_vision_providers": llm.available_vision_providers(),
     }
 
 
@@ -125,6 +132,11 @@ def save_llm_settings(request: LLMSettingsRequest):
     provider = request.provider.strip().lower()
     if provider not in llm.available_providers():
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}. Choose one of {llm.available_providers()}.")
+    role = request.role.strip().lower()
+    if role not in {"text", "vision"}:
+        raise HTTPException(status_code=400, detail="Role must be text or vision.")
+    if role == "vision" and provider not in llm.available_vision_providers():
+        raise HTTPException(status_code=400, detail=f"{provider} does not support image reading. Choose one of {llm.available_vision_providers()}.")
 
     api_key = request.api_key.strip()
     if not api_key:
@@ -137,14 +149,16 @@ def save_llm_settings(request: LLMSettingsRequest):
     except llm.LLMError as exc:
         raise HTTPException(status_code=502, detail=f"Could not validate the {provider} API key: {exc}") from exc
 
-    _write_env_value("LLM_PROVIDER", provider)
+    provider_env = "VISION_LLM_PROVIDER" if role == "vision" else "TEXT_LLM_PROVIDER"
+    _write_env_value(provider_env, provider)
     _write_env_value(llm.provider_key_env(provider), api_key)
-    os.environ["LLM_PROVIDER"] = provider
+    os.environ[provider_env] = provider
     os.environ[llm.provider_key_env(provider)] = api_key
     return {
         "provider": provider,
+        "role": role,
         "configured": True,
-        "message": f"{provider} API key is valid and saved.",
+        "message": f"{provider} {role} API key is valid and saved.",
         "key_preview": _key_preview(api_key),
     }
 

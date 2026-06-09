@@ -16,7 +16,7 @@ def extract_teacher_evaluation_profile(filename: str, text: str, content: bytes 
     academic_ranking = _clean_academic_ranking(
         _extract_academic_ranking(text, content) or str(visual_fields.get("academic_ranking", ""))
     )
-    teacher_comments = _summarize_teacher_comments(text)
+    teacher_comments = _summarize_teacher_comments(text) or _visual_teacher_comments(visual_fields)
     evaluation_note = _teacher_evaluation_note(
         score_source=score_source,
         has_rating=total_score is not None,
@@ -126,12 +126,14 @@ def _ai_extract_teacher_evaluation_from_image(content: bytes | None) -> dict:
         return {}
 
     try:
-        message = llm.complete(
+        message = llm.complete_vision(
             (
                 "Read this teacher evaluation form image. Extract only visible handwritten or typed form values. "
-                "Return JSON only with keys: student_name, academic_ranking, total_score. "
+                "Return JSON only with keys: student_name, academic_ranking, total_score, teacher_comments, improvement_area. "
                 "academic_ranking must be one of Top 5%, Top 10%, Top 15%, Top 20%, Top 25%, or empty. "
                 "total_score must look like 49/50 or 50/50, or empty if not legible. "
+                "teacher_comments should contain the visible Further Comments text only. "
+                "improvement_area should contain the visible improvement-area answer only. "
                 "Do not infer or guess unclear handwritten numbers."
             ),
             max_tokens=300,
@@ -144,6 +146,10 @@ def _ai_extract_teacher_evaluation_from_image(content: bytes | None) -> dict:
 
 
 def _teacher_evaluation_first_page_png(content: bytes) -> bytes:
+    image_data = _image_bytes_as_png(content)
+    if image_data:
+        return image_data
+
     try:
         from pdf2image import convert_from_bytes
 
@@ -159,6 +165,25 @@ def _teacher_evaluation_first_page_png(content: bytes) -> bytes:
         ratio = 1800 / image.width
         image = image.resize((1800, int(image.height * ratio)))
 
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _image_bytes_as_png(content: bytes) -> bytes:
+    try:
+        from PIL import Image
+
+        image = Image.open(io.BytesIO(content))
+        image.load()
+    except Exception:
+        return b""
+
+    if image.mode not in {"RGB", "L"}:
+        image = image.convert("RGB")
+    if image.width > 1800:
+        ratio = 1800 / image.width
+        image = image.resize((1800, int(image.height * ratio)))
     output = io.BytesIO()
     image.save(output, format="PNG")
     return output.getvalue()
@@ -360,6 +385,17 @@ def _summarize_teacher_comments(text: str) -> str:
     if ai_summary:
         return ai_summary
     return _fallback_teacher_comment_summary(comments, improvement)
+
+
+def _visual_teacher_comments(visual_fields: dict) -> str:
+    comments = _clean_cell(str(visual_fields.get("teacher_comments", "")))
+    improvement = _clean_cell(str(visual_fields.get("improvement_area", "")))
+    parts = []
+    if comments:
+        parts.append(comments)
+    if improvement and improvement.lower() != comments.lower():
+        parts.append(f"Improvement area: {improvement}")
+    return " ".join(parts)
 
 
 def _ai_summarize_teacher_comments(comments: str, improvement: str) -> str:

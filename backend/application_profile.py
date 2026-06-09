@@ -1,4 +1,5 @@
 import json
+import io
 import os
 import re
 from dataclasses import dataclass
@@ -55,7 +56,27 @@ def extract_application_profile(filename: str, text: str, content: bytes | None 
     technical_experience = _technical_experience(resume_text)
     technical_skills = _technical_skills(resume_text)
     resume_features = _resume_feature_summary(resume_text, stem_statement)
+    applicant_name = _extract_name(sections.form_text or text, filename)
+    school = _extract_school(sections.form_text, text)
+    city = _extract_city(sections.form_text, text)
     project_ranks = _extract_project_preference_ranks(sections.form_text or text, content)
+    visual_form = {}
+    if _needs_visual_sunnybrook_fallback(
+        content,
+        form_text=sections.form_text,
+        applicant_name=applicant_name,
+        school=school,
+        current_grade=current_grade,
+        project_ranks=project_ranks,
+        form_courses=form_courses,
+    ):
+        visual_form = _ai_extract_sunnybrook_form_from_images(content)
+        applicant_name = applicant_name or str(visual_form.get("full_name", "")).strip()
+        school = school or str(visual_form.get("current_high_school", "")).strip()
+        city = city or str(visual_form.get("city", "")).strip()
+        current_grade = current_grade or _int_or_none(visual_form.get("current_grade"))
+        project_ranks = _merge_project_ranks(project_ranks, visual_form)
+
     general_application_notes = list(sections.warnings)
     sunnybrook_form_note = _sunnybrook_form_note(
         sections.form_text,
@@ -63,6 +84,7 @@ def extract_application_profile(filename: str, text: str, content: bytes | None 
         form_current_grade,
         project_ranks,
         stem_statement,
+        visual_form,
     )
 
     fus_text = "\n".join([cover_letter, stem_statement])
@@ -73,10 +95,10 @@ def extract_application_profile(filename: str, text: str, content: bytes | None 
 
     return {
         "file_name": filename,
-        "applicant_name": _extract_name(sections.form_text or text, filename),
+        "applicant_name": applicant_name,
         "email": _extract_email(text),
-        "school": _extract_school(sections.form_text, text),
-        "city": _extract_city(sections.form_text, text),
+        "school": school,
+        "city": city,
         "current_grade": current_grade,
         "gender": "",
         "experimental_work_rank": project_ranks.get("experimental_work", ""),
@@ -127,7 +149,30 @@ def _extract_name(text: str, filename: str) -> str:
 
 def _extract_name_from_form(text: str) -> str:
     form_name = re.search(r"Full\s+Name:[ \t_]*([^\n_]+)", text, re.IGNORECASE)
-    return _clean_cell(form_name.group(1)) if form_name else ""
+    if form_name:
+        value = _clean_cell(form_name.group(1))
+        if value:
+            return value
+
+    lines = _clean_lines(text)
+    for index, line in enumerate(lines):
+        if not re.search(r"\bFull\s+Name\b", line, re.IGNORECASE):
+            continue
+        for candidate in lines[index + 1 : index + 60]:
+            value = _clean_cell(candidate)
+            if not value:
+                continue
+            if re.search(
+                r"\b(Current\s+High\s+School|Current\s+Grade|How\s+did\s+you\s+hear|Sunnybrook|Application|Project|Preference|Academic|Grade|Science|Math|Programming|Engineering|Development|Experimental|Description|Computer|Please|work with animals|specify)\b",
+                value,
+                re.IGNORECASE,
+            ):
+                continue
+            if re.fullmatch(r"\d{1,3}|x", value, re.IGNORECASE):
+                continue
+            if re.fullmatch(r"[A-Z][A-Za-z' -]+(?:\s+[A-Z][A-Za-z' -]+){1,3}", value):
+                return value
+    return ""
 
 
 def _name_from_filename(filename: str) -> str:
@@ -142,22 +187,20 @@ def _extract_school(form_text: str, full_text: str) -> str:
     if form_school:
         return form_school
 
-    normalized_text = _clean_cell(full_text)
-    generic_school = re.search(r"([A-Z][A-Za-z .'-]+?\s+(?:High|Secondary)\s+School)", normalized_text)
-    if generic_school:
-        value = _clean_school_value(generic_school.group(1))
-        if value:
-            return value
-
     patterns = [
         r"Name of School\s+([^\n]+)",
         r"High School Diploma:.*?\n(.+?)\s+-",
         r"(Dr\.\s*G\.W\.\s*Williams Secondary School)",
-        r"([A-Z][A-Za-z .'-]+ High School)",
-        r"([A-Z][A-Za-z .'-]+ Secondary School)",
     ]
     for pattern in patterns:
         match = re.search(pattern, full_text, re.IGNORECASE | re.DOTALL)
+        if match:
+            value = _clean_school_value(match.group(1))
+            if value:
+                return value
+
+    for line in _clean_lines(full_text):
+        match = re.search(r"\b([A-Z][A-Za-z .'-]+?\s+(?:High|Secondary)\s+School)\b", line)
         if match:
             value = _clean_school_value(match.group(1))
             if value:
@@ -178,6 +221,51 @@ def _extract_current_high_school_from_form(text: str) -> str:
         value = _clean_school_value(field.group(1))
         if value:
             return value
+
+    lines = _clean_lines(text)
+    for index, line in enumerate(lines):
+        if not re.search(r"Current\s+High\s+School", line, re.IGNORECASE):
+            continue
+        for candidate in lines[index + 1 : index + 60]:
+            value = _clean_school_value(candidate)
+            lowered = value.lower()
+            if not value:
+                continue
+            if not re.match(r"[A-Z0-9]", value):
+                continue
+            if any(
+                marker in lowered
+                for marker in [
+                    "current grade",
+                    "how did you hear",
+                    "project type",
+                    "academic grades",
+                    "sunnybrook",
+                    "application",
+                    "first name",
+                    "last name",
+                    "project preference",
+                    "academic grades",
+                    "please rate",
+                    "please fill",
+                    "specific course",
+                    "stem courses",
+                    "include grades",
+                    "bench-top",
+                    "hands-on",
+                    "may include",
+                    "electronics design",
+                    "animal work",
+                    "please specify",
+                    "description below",
+                    "work with animals",
+                ]
+            ):
+                continue
+            if re.fullmatch(r"\d{1,3}|x", value, re.IGNORECASE):
+                continue
+            if "," in value or re.search(r"\b(C\.?S\.?S\.?|secondary|high school|collegiate|academy|school)\b", value, re.IGNORECASE):
+                return value
 
     for line in _clean_lines(text):
         if re.search(r"\b(secondary|high)\s+school\b", line, re.IGNORECASE):
@@ -203,17 +291,53 @@ def _clean_school_value(value: str) -> str:
 
 def _extract_city(form_text: str, full_text: str) -> str:
     school_from_form = _extract_current_high_school_from_form(form_text)
-    match = re.search(r"\b([A-Za-z .'-]+),\s*(?:ON|Ontario)\b", school_from_form, re.IGNORECASE)
-    if match:
-        return f"{match.group(1).strip()}, Ontario"
+    city = _city_from_school_value(school_from_form)
+    if city:
+        return city
 
     school_line = re.search(r"Secondary School\s*[-–]\s*([^\n]+)", full_text, re.IGNORECASE)
     if school_line:
-        match = re.search(r",\s*([A-Za-z .'-]+),\s*ON\b", school_line.group(1))
-        if match:
-            return f"{match.group(1).strip()}, Ontario"
+        city = _city_from_school_value(school_line.group(1))
+        if city:
+            return city
     match = re.search(r"\b([A-Za-z .'-]+),\s*(?:ON|Ontario)\b", full_text, re.IGNORECASE)
     return f"{match.group(1).strip()}, Ontario" if match else ""
+
+
+def _city_from_school_value(value: str) -> str:
+    value = _clean_cell(value)
+    if not value:
+        return ""
+
+    province_match = re.search(r",\s*([A-Za-z .'-]{2,}),\s*(ON|Ontario)\b", value, re.IGNORECASE)
+    if province_match:
+        return f"{_clean_cell(province_match.group(1))}, Ontario"
+
+    trailing_province = re.search(r",\s*([A-Za-z .'-]{2,})\s+(ON|Ontario)\b", value, re.IGNORECASE)
+    if trailing_province:
+        return f"{_clean_cell(trailing_province.group(1))}, Ontario"
+
+    if "," in value:
+        candidate = _clean_cell(value.rsplit(",", 1)[-1])
+        candidate = re.sub(r"\b(?:ON|Ontario)\b\.?$", "", candidate, flags=re.IGNORECASE)
+        candidate = _clean_cell(candidate)
+        if _looks_like_city(candidate):
+            return candidate
+
+    dash_match = re.search(r"\s[-–]\s([A-Za-z .'-]{2,})(?:\s+(?:ON|Ontario))?$", value, re.IGNORECASE)
+    if dash_match:
+        candidate = _clean_cell(dash_match.group(1))
+        if _looks_like_city(candidate):
+            return candidate
+    return ""
+
+
+def _looks_like_city(value: str) -> bool:
+    if not value:
+        return False
+    if re.search(r"\b(?:school|secondary|c\.?s\.?s\.?|academy|college|collegiate|institute)\b", value, re.IGNORECASE):
+        return False
+    return bool(re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,60}", value))
 
 
 def _extract_form_course_grades(text: str) -> list[CourseGrade]:
@@ -422,6 +546,103 @@ def _extract_project_preference_ranks(text: str, content: bytes | None) -> dict[
     return _project_ranks_from_text(text)
 
 
+def _needs_visual_sunnybrook_fallback(
+    content: bytes | None,
+    *,
+    form_text: str,
+    applicant_name: str,
+    school: str,
+    current_grade: int | None,
+    project_ranks: dict[str, int | str],
+    form_courses: list[CourseGrade],
+) -> bool:
+    if not content or not llm.is_configured():
+        return False
+    if not form_text.strip():
+        return True
+    if not applicant_name or not school or not current_grade:
+        return True
+    if len([rank for rank in project_ranks.values() if isinstance(rank, int)]) < 2:
+        return True
+    if _academic_grades_block(form_text) and not form_courses:
+        return True
+    return False
+
+
+def _ai_extract_sunnybrook_form_from_images(content: bytes | None) -> dict:
+    if not content:
+        return {}
+
+    pages = _pdf_pages_as_png(content, max_pages=5)
+    if not pages:
+        return {}
+
+    merged: dict[str, object] = {}
+    prompt = (
+        "Read this page image from a Sunnybrook Focused Ultrasound Lab high school application package. "
+        "If this page is not the Sunnybrook application form, return JSON only as {}. "
+        "Extract only visible typed or handwritten/form-filled values. Do not infer or guess. "
+        "Return JSON only with keys: full_name, current_high_school, city, current_grade, "
+        "experimental_work_rank, engineering_technology_development_rank, programming_rank. "
+        "Ranks must be 1, 2, 3, or empty. City may be one or more words and may appear after a comma in the school field."
+    )
+    for image_png in pages:
+        try:
+            raw = llm.complete_vision(prompt, max_tokens=350, temperature=0, image_png=image_png)
+            data = _parse_json_object(raw)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        for key, value in data.items():
+            if merged.get(key) not in ("", None):
+                continue
+            if value in ("", None):
+                continue
+            merged[key] = value
+    return merged
+
+
+def _pdf_pages_as_png(content: bytes, max_pages: int) -> list[bytes]:
+    try:
+        from pdf2image import convert_from_bytes
+
+        images = convert_from_bytes(content, dpi=220, first_page=1, last_page=max_pages)
+    except Exception:
+        return []
+
+    result = []
+    for image in images:
+        if image.width > 1800:
+            ratio = 1800 / image.width
+            image = image.resize((1800, int(image.height * ratio)))
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        result.append(output.getvalue())
+    return result
+
+
+def _merge_project_ranks(ranks: dict[str, int | str], visual_form: dict) -> dict[str, int | str]:
+    merged = dict(ranks)
+    for key in ["experimental_work", "engineering_technology_development", "programming"]:
+        rank_key = f"{key}_rank"
+        if isinstance(merged.get(key), int):
+            continue
+        rank = _int_or_none(visual_form.get(rank_key))
+        if rank in {1, 2, 3}:
+            merged[key] = rank
+    return merged
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        if value in ("", None):
+            return None
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def _project_ranks_from_pdf_annotations(content: bytes | None) -> dict[str, int]:
     if not content:
         return {}
@@ -514,18 +735,27 @@ def _project_ranks_from_text(text: str) -> dict[str, int]:
 def _project_ranks_from_vertical_text(text: str) -> dict[str, int]:
     lines = _clean_lines(text)
     label_keys = []
+
+    def add_label(key: str) -> None:
+        if not label_keys or label_keys[-1] != key:
+            label_keys.append(key)
+
     for index, line in enumerate(lines):
         lowered = line.lower()
-        if "experimental work" in lowered:
-            label_keys.append("experimental_work")
+        if "experimental work" in lowered or (
+            lowered == "work"
+            and index > 0
+            and "experimental" in lines[index - 1].lower()
+        ):
+            add_label("experimental_work")
         elif "engineering and technology" in lowered or (
             lowered == "development"
             and index > 0
             and "engineering and technology" in lines[index - 1].lower()
         ):
-            label_keys.append("engineering_technology_development")
+            add_label("engineering_technology_development")
         elif lowered == "programming":
-            label_keys.append("programming")
+            add_label("programming")
 
     if len(label_keys) < 2:
         return {}
@@ -537,7 +767,7 @@ def _project_ranks_from_vertical_text(text: str) -> dict[str, int]:
         if lowered == "programming":
             start_collecting = True
             continue
-        if start_collecting and re.search(r"\b(?:math|science|chemistry|physics|biology|computer)\b", lowered):
+        if rank_values and start_collecting and re.search(r"\b(?:math|science|chemistry|physics|biology|computer)\b", lowered):
             break
         if start_collecting and re.fullmatch(r"[123]", line):
             rank_values.append(int(line))
@@ -591,16 +821,18 @@ def _sunnybrook_form_note(
     form_current_grade: int | None,
     project_ranks: dict[str, int | str],
     stem_statement: str,
+    visual_form: dict | None = None,
 ) -> str:
     if not form_text.strip():
         return ""
 
+    visual_form = visual_form or {}
     notes = []
-    if not _extract_name_from_form(form_text):
+    if not _extract_name_from_form(form_text) and not str(visual_form.get("full_name", "")).strip():
         notes.append("Full name could not be read from Sunnybrook form.")
-    if not _extract_current_high_school_from_form(form_text):
+    if not _extract_current_high_school_from_form(form_text) and not str(visual_form.get("current_high_school", "")).strip():
         notes.append("Current high school could not be read from Sunnybrook form.")
-    if not form_current_grade:
+    if not form_current_grade and not _int_or_none(visual_form.get("current_grade")):
         notes.append("Current grade could not be read from Sunnybrook form.")
     if _academic_grades_block(form_text) and not form_courses:
         notes.append("Academic grades could not be read from Sunnybrook form.")
@@ -616,6 +848,8 @@ def _sunnybrook_form_note(
 
 
 def _missing_project_rank_labels(ranks: dict[str, int | str]) -> list[str]:
+    if len([rank for rank in ranks.values() if isinstance(rank, int)]) >= 2:
+        return []
     labels = {
         "experimental_work": "Experimental Work",
         "engineering_technology_development": "Engineering and Technology Development",
@@ -654,6 +888,17 @@ def _classify_application_sections(text: str) -> ApplicationSections:
     form_range = _form_range(text)
     transcript_range = _transcript_range(text, form_range)
     stem_range = _stem_statement_range(text, form_range)
+    ai_sections = None
+    if (not form_range or not transcript_range) and llm.is_configured():
+        ai_sections = _ai_split_application_sections(text)
+        if ai_sections:
+            if not form_range:
+                form_range = ai_sections.get("form_range")
+            if not transcript_range:
+                transcript_range = ai_sections.get("transcript_range")
+            if not stem_range:
+                stem_range = ai_sections.get("stem_range")
+
     protected_ranges = [item for item in [form_range, transcript_range, stem_range] if item]
 
     form_text = _slice_range(text, form_range)
@@ -665,7 +910,22 @@ def _classify_application_sections(text: str) -> ApplicationSections:
     resume_blocks: list[str] = []
     unknown_blocks: list[str] = []
 
-    for block in _split_candidate_blocks(remaining_text):
+    marker_cover, marker_resume = _split_cover_resume_by_markers(remaining_text)
+    if marker_cover:
+        cover_blocks.append(marker_cover)
+    if marker_resume:
+        resume_blocks.append(marker_resume)
+    if marker_cover or marker_resume:
+        consumed_ranges = []
+        if marker_cover:
+            consumed_ranges.append(_text_range_for_substring(remaining_text, marker_cover))
+        if marker_resume:
+            consumed_ranges.append(_text_range_for_substring(remaining_text, marker_resume))
+        remaining_for_blocks = _remove_ranges(remaining_text, [item for item in consumed_ranges if item])
+    else:
+        remaining_for_blocks = remaining_text
+
+    for block in _split_candidate_blocks(remaining_for_blocks):
         cover_part, rest_part = _split_cover_letter_from_following_material(block)
         if cover_part:
             cover_blocks.append(cover_part)
@@ -693,6 +953,19 @@ def _classify_application_sections(text: str) -> ApplicationSections:
             resume_blocks.append(best_resume)
             unknown_blocks.remove(best_resume)
 
+    if (not cover_blocks or not resume_blocks) and llm.is_configured():
+        if ai_sections is None:
+            ai_sections = _ai_split_application_sections(text)
+        if ai_sections:
+            if not cover_blocks:
+                ai_cover = _slice_range(text, ai_sections.get("cover_range"))
+                if ai_cover and _cover_letter_score(ai_cover) >= 2:
+                    cover_blocks.append(ai_cover)
+            if not resume_blocks:
+                ai_resume = _slice_range(text, ai_sections.get("resume_range"))
+                if ai_resume and _resume_block_score(ai_resume) >= 2:
+                    resume_blocks.append(ai_resume)
+
     warnings = []
     if not form_text.strip():
         warnings.append("Sunnybrook application form was not clearly detected")
@@ -713,18 +986,119 @@ def _classify_application_sections(text: str) -> ApplicationSections:
     )
 
 
+def _split_cover_resume_by_markers(text: str) -> tuple[str, str]:
+    resume_start = _resume_start_pos(text)
+    if resume_start is None:
+        return "", ""
+
+    cover_candidate = text[:resume_start].strip()
+    resume_candidate = text[resume_start:].strip()
+    cover = cover_candidate if _cover_letter_score(cover_candidate) >= 3 else ""
+    resume = resume_candidate if _resume_block_score(resume_candidate) >= 3 else ""
+    return cover, resume
+
+
+def _resume_start_pos(text: str) -> int | None:
+    markers = [
+        r"(?m)^\s*(?:Resume|Curriculum\s+Vitae|CV)\s*$",
+        r"(?m)^\s*High\s+School\s+Diploma:",
+        r"(?m)^\s*Profile\s*:?\s*$",
+        r"(?m)^\s*Education\s*:?\s*$",
+        r"(?m)^\s*Relevant\s+Experience\s*/?\s*Skills\s*:?\s*$",
+        r"(?m)^\s*(?:Work|Volunteer|Technical|Professional)\s+Experience\s*:?\s*$",
+    ]
+    candidates = []
+    for pattern in markers:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            candidate = text[match.start() :]
+            if _resume_block_score(candidate) >= 3:
+                candidates.append(match.start())
+    return min(candidates) if candidates else None
+
+
+def _text_range_for_substring(text: str, value: str) -> tuple[int, int] | None:
+    if not value:
+        return None
+    start = text.find(value)
+    if start < 0:
+        return None
+    return (start, start + len(value))
+
+
 def _split_cover_letter_from_following_material(block: str) -> tuple[str, str]:
-    if not re.search(r"\bDear\b", block, re.IGNORECASE) or not re.search(r"\bSincerely\b", block, re.IGNORECASE):
+    if not re.search(r"\bSincerely\b", block, re.IGNORECASE):
         return "", block
 
     match = re.search(
-        r"\bSincerely,?\s+(?:[A-Z][A-Za-z'-]+\s+){1,3}(?=(?:[A-Z][A-Z .'-]{5,}\b|\s*(?:Resume|Education|Work Experience|Volunteer Experience|Technical Experience|Professional Experience|Personal Profile)\b))",
+        r"\bSincerely,?\s+(?:[A-Z][A-Za-z'-]+\s+){1,3}(?=(?:[A-Z][A-Za-z'-]+\s+){1,3}\s*(?:\d{3}|[•@])|\s*(?:Resume|Education|Work Experience|Volunteer Experience|Technical Experience|Professional Experience|Personal Profile|Profile)\s*:?\b|[A-Z][A-Z .'-]{5,}\b)",
         block,
         re.IGNORECASE,
     )
     if not match:
         return "", block
-    return block[: match.end()].strip(), block[match.end() :].strip()
+    cover_part = block[: match.end()].strip()
+    if _cover_letter_score(cover_part) < 3:
+        return "", block
+    return cover_part, block[match.end() :].strip()
+
+
+def _ai_split_application_sections(text: str) -> dict[str, tuple[int, int] | None] | None:
+    numbered_lines = []
+    lines = text.splitlines()
+    for index, line in enumerate(lines, start=1):
+        cleaned = _clean_cell(line)
+        if cleaned:
+            numbered_lines.append(f"{index}: {cleaned}")
+    if not numbered_lines:
+        return None
+
+    prompt = (
+        "Split this application text into sections for a high school research program application.\n"
+        "Use semantic evidence, not fixed opening phrases.\n"
+        "- cover_letter: prose addressed to the program, usually includes interest/fit and a closing.\n"
+        "- resume: structured profile/CV with education, skills, experience, awards, dates, bullets, or certifications.\n"
+        "- sunnybrook_form: Sunnybrook Focused Ultrasound Lab Summer Program form, including student info, project preferences, grades, and More about the Applicant.\n"
+        "- transcript: official transcript/report card course records from school or Ministry of Education.\n"
+        "- stem_statement: applicant answer to More about the Applicant, only if it can be isolated.\n"
+        "Return JSON only with integer 1-based inclusive line ranges or null:\n"
+        "{\"cover_letter_start\": number|null, \"cover_letter_end\": number|null, "
+        "\"resume_start\": number|null, \"resume_end\": number|null, "
+        "\"sunnybrook_form_start\": number|null, \"sunnybrook_form_end\": number|null, "
+        "\"transcript_start\": number|null, \"transcript_end\": number|null, "
+        "\"stem_statement_start\": number|null, \"stem_statement_end\": number|null}\n\n"
+        "Lines:\n"
+        f"{chr(10).join(numbered_lines[:360])}"
+    )
+
+    try:
+        raw = llm.complete(prompt, max_tokens=180, temperature=0)
+        data = _parse_json_object(raw)
+        return {
+            "cover_range": _line_range(lines, data.get("cover_letter_start"), data.get("cover_letter_end")),
+            "resume_range": _line_range(lines, data.get("resume_start"), data.get("resume_end")),
+            "form_range": _line_range(lines, data.get("sunnybrook_form_start"), data.get("sunnybrook_form_end")),
+            "transcript_range": _line_range(lines, data.get("transcript_start"), data.get("transcript_end")),
+            "stem_range": _line_range(lines, data.get("stem_statement_start"), data.get("stem_statement_end")),
+        }
+    except Exception:
+        return None
+
+
+def _line_range(lines: list[str], start: object, end: object) -> tuple[int, int] | None:
+    if not isinstance(start, int) or not isinstance(end, int):
+        return None
+    if start < 1 or end < start:
+        return None
+    line_starts = []
+    cursor = 0
+    for line in lines:
+        line_starts.append(cursor)
+        cursor += len(line) + 1
+    if start > len(lines):
+        return None
+    range_start = line_starts[start - 1]
+    range_end = line_starts[min(end, len(lines)) - 1] + len(lines[min(end, len(lines)) - 1])
+    return (range_start, range_end)
 
 
 def _form_range(text: str) -> tuple[int, int] | None:
@@ -742,6 +1116,10 @@ def _form_range(text: str) -> tuple[int, int] | None:
             r"(?m)^\s*(?:Resume|Curriculum\s+Vitae|CV)\s*$",
             r"(?m)^\s*Cover\s+Letter\s*$",
             r"(?m)^\s*High\s+School\s+Diploma:",
+            r"(?m)^\s*Profile\s*:?\s*$",
+            r"(?m)^\s*Education\s*:?\s*$",
+            r"(?m)^\s*Dear\s+",
+            r"(?m)^\s*To\s+Whom\s+it\s+May\s+Concern",
         ],
     )
     return (start.start(), boundary.start() if boundary else len(text))
@@ -761,7 +1139,10 @@ def _transcript_range(text: str, form_range: tuple[int, int] | None) -> tuple[in
         r"(?m)^\s*(?:Resume|Curriculum\s+Vitae|CV)\s*$",
         r"(?m)^\s*Cover\s+Letter\s*$",
         r"(?m)^\s*High\s+School\s+Diploma:",
+        r"(?m)^\s*Profile\s*:?\s*$",
+        r"(?m)^\s*Education\s*:?\s*$",
         r"(?m)^\s*Dear\s+",
+        r"(?m)^\s*To\s+Whom\s+it\s+May\s+Concern",
     ]
     boundary = _first_match_after(text, start.end(), boundaries)
     end = boundary.start() if boundary else len(text)
@@ -783,7 +1164,11 @@ def _stem_statement_range(text: str, form_range: tuple[int, int] | None) -> tupl
             r"STUDENT\s+TRANSCRIP",
             r"(?m)^\s*(?:Resume|Curriculum\s+Vitae|CV)\s*$",
             r"(?m)^\s*Cover\s+Letter\s*$",
+            r"(?m)^\s*High\s+School\s+Diploma:",
+            r"(?m)^\s*Profile\s*:?\s*$",
+            r"(?m)^\s*Education\s*:?\s*$",
             r"(?m)^\s*Dear\s+",
+            r"(?m)^\s*To\s+Whom\s+it\s+May\s+Concern",
         ],
     )
     end = boundary.start() if boundary else len(text)
@@ -847,9 +1232,10 @@ def _starts_new_candidate_block(line: str) -> bool:
         return False
     return bool(
         re.search(r"^Dear\b", cleaned, re.IGNORECASE)
+        or re.search(r"^To\s+Whom\s+it\s+May\s+Concern\b", cleaned, re.IGNORECASE)
         or re.search(r"^(Resume|Curriculum\s+Vitae|CV|Cover\s+Letter)$", cleaned, re.IGNORECASE)
         or re.search(
-            r"^(Education|Work Experience|Volunteer Experience|Technical Experience|Professional Experience|Extracurriculars?|Skills|Awards|Certifications?)$",
+            r"^(Profile|Education|Work Experience|Volunteer Experience|Technical Experience|Professional Experience|Extracurriculars?|Skills|Awards|Certifications?)\s*:?$",
             cleaned,
             re.IGNORECASE,
         )
@@ -871,7 +1257,7 @@ def _cover_letter_score(text: str) -> int:
     lines = _clean_lines(text)
     paragraphish = len([line for line in lines if len(line.split()) >= 12])
     score = 0
-    if re.search(r"\bDear\b", text, re.IGNORECASE):
+    if re.search(r"\bDear\b|\bTo\s+Whom\s+it\s+May\s+Concern\b", text, re.IGNORECASE):
         score += 3
     if _has_any(text, ["sincerely", "regards", "thank you"]):
         score += 2
@@ -1052,7 +1438,7 @@ def _ai_resume_feature_summary(resume_text: str, stem_statement: str) -> dict[st
             return None
         return {
             "experience": experience or "Limited concrete STEM-related resume experience found.",
-            "skills": skills or "Limited concrete STEM-related skills found.",
+            "skills": _filter_feature_skill_summary(skills) or "Limited concrete STEM-related skills found.",
         }
     except Exception:
         return None
@@ -1116,7 +1502,7 @@ def _summarize_resume_evidence_lines(lines: list[str]) -> str:
 def _summarize_resume_skills(skills: list[str], evidence_lines: list[str]) -> str:
     concrete = []
     for skill in skills:
-        if skill not in {"Health & Wellness", "SHSM", "STEM"}:
+        if skill not in {"Health & Wellness", "SHSM", "STEM", "biology", "chemistry", "physics", "math", "mathematics"}:
             concrete.append(skill)
     if concrete:
         return ", ".join(_dedupe(concrete)[:14])
@@ -1130,6 +1516,13 @@ def _summarize_resume_skills(skills: list[str], evidence_lines: list[str]) -> st
     if "programming" in joined:
         evidence_based.append("programming exposure")
     return ", ".join(evidence_based)
+
+
+def _filter_feature_skill_summary(summary: str) -> str:
+    excluded = {"biology", "chemistry", "physics", "math", "mathematics"}
+    parts = [_clean_cell(part) for part in re.split(r",|;", summary)]
+    filtered = [part for part in parts if part and part.lower() not in excluded]
+    return ", ".join(_dedupe(filtered))
 
 
 def _phrase_if(text: str, pattern: str, phrase: str) -> str:
@@ -1185,15 +1578,10 @@ def _technical_skills_from_line(line: str) -> list[str]:
         "patient": "patient support",
         "pediatrics": "pediatrics",
         "lifesaving": "lifesaving certification",
-        "biology": "biology",
-        "chemistry": "chemistry",
-        "physics": "physics",
         "engineering": "engineering",
         "computer science": "computer science",
         "computer information science": "computer information science",
         "computer engineering": "computer engineering",
-        "math": "math",
-        "mathematics": "mathematics",
         "stem": "STEM",
         "shsm": "SHSM",
         "ocra": "OCRA certification",
@@ -1265,7 +1653,7 @@ def _cover_letter_notes(text: str, fus_mentions: int) -> str:
 
 def _evaluate_cover_letter(text: str, fus_mentions: int) -> dict:
     if not text.strip():
-        return {"score": 0, "notes": "Cover letter section was not clearly detected."}
+        return {"score": "", "notes": ""}
 
     ai_result = _ai_evaluate_cover_letter(text)
     if ai_result is not None:
@@ -1443,13 +1831,14 @@ def _fus_relevant_concepts(text: str) -> list[str]:
 
     lowered = text.lower()
     concept_patterns = [
-        ("non-invasive therapy/treatment", [r"non[- ]?invasive", r"\btherapy\b", r"\btreatment\b", r"\bablation\b"]),
-        ("imaging/guidance", [r"\bimaging\b", r"ultrasound-guided", r"\bguided\b"]),
-        ("biomedical/medical application", [r"\bbiomedical\b", r"\bmedical\b", r"\bclinical\b", r"\bhealthcare\b"]),
+        ("non-invasive therapy/treatment", [r"non[- ]?invasive", r"\btherapy\b", r"\btreatment\b", r"\bablation\b", r"\bsonodynamic\b"]),
+        ("imaging/guidance", [r"\bimaging\b", r"\bmri\b", r"ultrasound-guided", r"\bguided\b"]),
+        ("biomedical/medical application", [r"\bbiomedical\b", r"\bmedical\b", r"\bclinical\b", r"clinical application", r"\bhealthcare\b"]),
         ("device/technology development", [r"\bdevice\b", r"technology development", r"\btransducer\b", r"\bengineering\b"]),
-        ("acoustics/sonication", [r"\bacoustic", r"\bsonication\b", r"\bsound waves?\b"]),
-        ("brain/neuroscience application", [r"\bbrain\b", r"\bneuro", r"blood[- ]brain barrier"]),
+        ("acoustics/sonication", [r"\bacoustic", r"\bsonication\b", r"\bsonodynamic\b", r"\bsound waves?\b"]),
+        ("brain/neuroscience application", [r"\bbrain\b", r"\bneuro", r"blood[- ]brain barrier", r"\bneurostimulation\b"]),
         ("cancer/tumor application", [r"\bcancer\b", r"\btumou?r\b", r"\boncology\b"]),
+        ("drug delivery/nanomedicine", [r"drug delivery", r"\bnanoparticles?\b", r"\bmicrobubbles?\b"]),
         ("preclinical/experimental research", [r"\bpreclinical\b", r"\bexperimental\b", r"\bresearch\b", r"\blab(?:oratory)?\b"]),
     ]
 
