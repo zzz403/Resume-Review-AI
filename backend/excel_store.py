@@ -1,4 +1,5 @@
 import json
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,8 @@ JSON_PATH = DATA_DIR / "applications.json"
 EXCEL_PATH = DATA_DIR / "applications.xlsx"
 
 COLUMNS = [
+    "student_id",
+    "created_at",
     "submitted_at",
     "file_name",
     "applicant_name",
@@ -81,44 +84,80 @@ EXCEL_COLUMNS = [
 ]
 
 
-def save_application_profile(profile: dict) -> dict:
+def create_student(name: str, email: str = "") -> dict:
+    """Create an empty student row keyed by a fresh student_id."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     rows = _read_rows()
-    row = {column: profile.get(column, "") for column in COLUMNS}
-    row["features"] = _combined_features(row)
-    row["submitted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-    existing_index = _find_existing_row(rows, row)
-    if existing_index is None:
-        rows.append(row)
-        saved = row
-    else:
-        rows[existing_index] = _merge_application_row(rows[existing_index], row)
-        saved = rows[existing_index]
-
+    row = {column: "" for column in COLUMNS}
+    row["student_id"] = uuid.uuid4().hex
+    row["applicant_name"] = name.strip()
+    row["email"] = email.strip()
+    row["created_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    rows.append(row)
     _write_json(rows)
     _write_xlsx(rows)
-    return saved
+    return _student_summary(row)
 
 
-def save_teacher_evaluation_profile(profile: dict) -> dict:
+def list_students() -> list[dict]:
+    return [_student_summary(row) for row in _read_rows()]
+
+
+def get_student(student_id: str) -> dict | None:
+    for row in _read_rows():
+        if row.get("student_id") == student_id:
+            return row
+    return None
+
+
+def delete_student(student_id: str) -> dict | None:
+    rows = _read_rows()
+    removed = None
+    for row in rows:
+        if row.get("student_id") == student_id:
+            removed = row
+            break
+    if removed is None:
+        return None
+    rows = [row for row in rows if row.get("student_id") != student_id]
+    _write_json(rows)
+    _write_xlsx(rows)
+    return removed
+
+
+def save_application_profile(profile: dict, student_id: str) -> dict:
+    """Merge an extracted application profile into the given student's row."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     rows = _read_rows()
-    row = {column: profile.get(column, "") for column in COLUMNS}
+    index = _find_by_id(rows, student_id)
+    if index is None:
+        raise KeyError(student_id)
 
-    existing_index = _find_existing_row(rows, row)
-    if existing_index is None:
-        rows.append(row)
-        saved = row
-    else:
-        updates = _non_empty_values(row)
-        updates["teacher_evaluation_note"] = row.get("teacher_evaluation_note", "")
-        rows[existing_index] = {**rows[existing_index], **updates}
-        saved = rows[existing_index]
+    incoming = {column: profile.get(column, "") for column in COLUMNS}
+    incoming["features"] = _combined_features(incoming)
+    incoming["submitted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
+    rows[index] = _merge_into_student(rows[index], incoming)
     _write_json(rows)
     _write_xlsx(rows)
-    return saved
+    return rows[index]
+
+
+def save_teacher_evaluation_profile(profile: dict, student_id: str) -> dict:
+    """Merge an extracted teacher-evaluation profile into the given student's row."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    rows = _read_rows()
+    index = _find_by_id(rows, student_id)
+    if index is None:
+        raise KeyError(student_id)
+
+    incoming = {column: profile.get(column, "") for column in COLUMNS}
+    updates = _non_empty_values(incoming)
+    updates["teacher_evaluation_note"] = incoming.get("teacher_evaluation_note", "")
+    rows[index] = _merge_into_student(rows[index], updates)
+    _write_json(rows)
+    _write_xlsx(rows)
+    return rows[index]
 
 
 def excel_file_path() -> Path:
@@ -139,42 +178,55 @@ def clear_application_data() -> dict:
     return {"removed_files": removed_files, "excel_path": str(EXCEL_PATH)}
 
 
-def _find_existing_row(rows: list[dict], row: dict) -> int | None:
-    email = str(row.get("email", "")).strip().lower()
-    file_name = str(row.get("file_name", "")).strip().lower()
-    applicant_name = _normalize_name(str(row.get("applicant_name", "")))
-    for index, existing in enumerate(rows):
-        existing_email = str(existing.get("email", "")).strip().lower()
-        existing_file = str(existing.get("file_name", "")).strip().lower()
-        existing_name = _normalize_name(str(existing.get("applicant_name", "")))
-        if email and existing_email == email:
-            return index
-        if file_name and existing_file == file_name:
-            return index
-        if applicant_name and existing_name == applicant_name:
+def _find_by_id(rows: list[dict], student_id: str) -> int | None:
+    for index, row in enumerate(rows):
+        if row.get("student_id") == student_id:
             return index
     return None
 
 
+def _merge_into_student(existing: dict, incoming: dict) -> dict:
+    """Apply non-empty incoming values onto a student row.
+
+    Empty incoming values never wipe existing data, so an application upload
+    cannot erase teacher-evaluation fields (and vice versa). The student_id,
+    created_at, and the operator-chosen applicant_name are always preserved.
+    """
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if key in ("student_id", "created_at"):
+            continue
+        if value in ("", None):
+            continue
+        merged[key] = value
+    if existing.get("applicant_name"):
+        merged["applicant_name"] = existing["applicant_name"]
+    merged["student_id"] = existing.get("student_id", "")
+    merged["created_at"] = existing.get("created_at", "")
+    return merged
+
+
+def _student_summary(row: dict) -> dict:
+    return {
+        "student_id": row.get("student_id", ""),
+        "applicant_name": row.get("applicant_name", ""),
+        "email": row.get("email", ""),
+        "school": row.get("school", ""),
+        "current_grade": row.get("current_grade", ""),
+        "has_application": _application_row_has_application(row),
+        "has_teacher_evaluation": _application_row_has_teacher_evaluation(row),
+        "resume_rating_10": row.get("resume_rating_10", ""),
+        "cover_letter_rating_10": row.get("cover_letter_rating_10", ""),
+        "stem_statement_rating_10": row.get("stem_statement_rating_10", ""),
+        "teacher_report_rating_5": row.get("teacher_report_rating_5", ""),
+        "academic_ranking": row.get("academic_ranking", ""),
+        "created_at": row.get("created_at", ""),
+        "submitted_at": row.get("submitted_at", ""),
+    }
+
+
 def _non_empty_values(row: dict) -> dict:
     return {key: value for key, value in row.items() if value not in ("", None)}
-
-
-def _merge_application_row(existing: dict, incoming: dict) -> dict:
-    teacher_fields = {
-        "gender",
-        "teacher_evaluation_file_name",
-        "teacher_report_rating_5",
-        "teacher_evaluation_total_score",
-        "teacher_evaluation_note",
-        "teacher_comments",
-        "academic_ranking",
-    }
-    merged = {**existing, **incoming}
-    for field in teacher_fields:
-        if incoming.get(field) in ("", None) and existing.get(field) not in ("", None):
-            merged[field] = existing[field]
-    return merged
 
 
 def _normalize_name(value: str) -> str:
@@ -195,6 +247,10 @@ def _read_rows() -> list[dict]:
             row["general_application_note"] = row["processing_warnings"]
         row.pop("teacher_score_note", None)
         row.pop("processing_warnings", None)
+        if not row.get("student_id"):
+            row["student_id"] = uuid.uuid4().hex
+        if not row.get("created_at"):
+            row["created_at"] = row.get("submitted_at", "")
     return data
 
 
@@ -321,7 +377,6 @@ def _general_application_note(row: dict) -> str:
 def _application_row_has_application(row: dict) -> bool:
     application_fields = [
         "file_name",
-        "email",
         "school",
         "current_grade",
         "cover_letter_rating_10",

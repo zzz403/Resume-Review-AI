@@ -1,15 +1,15 @@
 import type {
-  ApplicationSubmitResponse,
   ClearApplicationDataResponse,
   ExtractResponse,
   LlmSettings,
   LlmSaveResponse,
   Review,
   ReviewResponse,
-  TeacherEvaluationSubmitResponse,
+  StudentDetail,
+  StudentSummary,
 } from '../types'
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+export const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8001'
 
 export async function extractResume(file: File): Promise<ExtractResponse> {
   const form = new FormData()
@@ -19,19 +19,55 @@ export async function extractResume(file: File): Promise<ExtractResponse> {
   return res.json()
 }
 
-export async function submitApplication(file: File): Promise<ApplicationSubmitResponse> {
-  const form = new FormData()
-  form.append('file', file)
-  const res = await fetch(`${API_BASE}/applications`, { method: 'POST', body: form })
-  if (!res.ok) throw new Error('Failed to submit application')
+export async function getStudents(): Promise<StudentSummary[]> {
+  const res = await fetch(`${API_BASE}/students`)
+  if (!res.ok) throw new Error('Failed to load students')
   return res.json()
 }
 
-export async function submitTeacherEvaluation(file: File): Promise<TeacherEvaluationSubmitResponse> {
+export async function createStudent(name: string, email = ''): Promise<StudentSummary> {
+  const res = await fetch(`${API_BASE}/students`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail ?? 'Failed to create student')
+  }
+  return res.json()
+}
+
+export async function getStudent(studentId: string): Promise<StudentDetail> {
+  const res = await fetch(`${API_BASE}/students/${studentId}`)
+  if (!res.ok) throw new Error('Failed to load student')
+  return res.json()
+}
+
+export async function deleteStudent(studentId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/students/${studentId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete student')
+}
+
+export async function submitApplication(studentId: string, file: File): Promise<StudentDetail> {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch(`${API_BASE}/teacher-evaluations`, { method: 'POST', body: form })
-  if (!res.ok) throw new Error('Failed to submit teacher evaluation')
+  const res = await fetch(`${API_BASE}/students/${studentId}/application`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail ?? 'Failed to submit application')
+  }
+  return res.json()
+}
+
+export async function submitTeacherEvaluation(studentId: string, file: File): Promise<StudentDetail> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${API_BASE}/students/${studentId}/teacher-evaluation`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail ?? 'Failed to submit teacher evaluation')
+  }
   return res.json()
 }
 

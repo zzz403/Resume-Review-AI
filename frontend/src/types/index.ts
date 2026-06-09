@@ -15,21 +15,24 @@ export interface ExtractResponse {
   text: string
 }
 
-export interface ApplicationSubmitResponse {
-  message: string
-  file_name: string
+export interface StudentSummary {
+  student_id: string
   applicant_name: string
-  excel_path: string
+  email: string
+  school: string
+  current_grade: string | number
+  has_application: boolean
+  has_teacher_evaluation: boolean
+  resume_rating_10: string | number
+  cover_letter_rating_10: string | number
+  stem_statement_rating_10: string | number
+  teacher_report_rating_5: string | number
+  academic_ranking: string
+  created_at: string
+  submitted_at: string
 }
 
-export interface TeacherEvaluationSubmitResponse {
-  message: string
-  file_name: string
-  saved_path: string
-  applicant_name: string
-  teacher_report_rating_5: number | string
-  academic_ranking: string
-}
+export type StudentDetail = Record<string, string | number | boolean | null>
 
 export interface ClearApplicationDataResponse {
   message: string

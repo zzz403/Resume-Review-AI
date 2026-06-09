@@ -14,7 +14,16 @@ import llm
 from application_profile import extract_application_profile
 from ai import review_resume
 from db import save_review, fetch_history
-from excel_store import clear_application_data, excel_file_path, save_application_profile, save_teacher_evaluation_profile
+from excel_store import (
+    clear_application_data,
+    create_student,
+    delete_student,
+    excel_file_path,
+    get_student,
+    list_students,
+    save_application_profile,
+    save_teacher_evaluation_profile,
+)
 from extractor import extract_text
 from teacher_evaluation import extract_teacher_evaluation_profile
 
@@ -27,6 +36,8 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
     ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -42,6 +53,11 @@ class LLMSettingsRequest(BaseModel):
     role: str = "text"
 
 
+class StudentCreateRequest(BaseModel):
+    name: str
+    email: str = ""
+
+
 RESUME_REVIEW_DIR = Path(__file__).resolve().parents[2]
 TEACHER_EVALUATION_DIR = RESUME_REVIEW_DIR / "teacher_evaluations"
 
@@ -53,24 +69,54 @@ async def extract(file: UploadFile = File(...)):
         raise HTTPException(status_code=422, detail="Could not extract text from this file")
     return {"text": text}
 
-@app.post("/applications")
-async def submit_application(file: UploadFile = File(...)):
+@app.get("/students")
+def get_students():
+    return list_students()
+
+
+@app.post("/students")
+def add_student(request: StudentCreateRequest):
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Student name is required.")
+    return create_student(name, request.email)
+
+
+@app.get("/students/{student_id}")
+def read_student(student_id: str):
+    student = get_student(student_id)
+    if student is None:
+        raise HTTPException(status_code=404, detail="Student not found.")
+    return student
+
+
+@app.delete("/students/{student_id}")
+def remove_student(student_id: str):
+    removed = delete_student(student_id)
+    if removed is None:
+        raise HTTPException(status_code=404, detail="Student not found.")
+    return {"message": "Student deleted", "student_id": student_id}
+
+
+@app.post("/students/{student_id}/application")
+async def submit_application(student_id: str, file: UploadFile = File(...)):
+    if get_student(student_id) is None:
+        raise HTTPException(status_code=404, detail="Student not found.")
     content = await file.read()
     text = extract_text(file.filename or "", content)
     if not text.strip():
         raise HTTPException(status_code=422, detail="Could not extract text from this file")
 
     profile = extract_application_profile(file.filename or "", text, content)
-    saved = save_application_profile(profile)
-    return {
-        "message": "Application saved to Excel",
-        "file_name": saved["file_name"],
-        "applicant_name": saved["applicant_name"],
-        "excel_path": str(excel_file_path()),
-    }
+    profile.setdefault("file_name", _safe_file_name(file.filename or "application"))
+    saved = save_application_profile(profile, student_id)
+    return saved
 
-@app.post("/teacher-evaluations")
-async def submit_teacher_evaluation(file: UploadFile = File(...)):
+
+@app.post("/students/{student_id}/teacher-evaluation")
+async def submit_teacher_evaluation(student_id: str, file: UploadFile = File(...)):
+    if get_student(student_id) is None:
+        raise HTTPException(status_code=404, detail="Student not found.")
     content = await file.read()
     if not content:
         raise HTTPException(status_code=422, detail="Teacher evaluation file is empty")
@@ -81,16 +127,8 @@ async def submit_teacher_evaluation(file: UploadFile = File(...)):
     saved_path.write_bytes(content)
     text = extract_text(file.filename or "", content)
     profile = extract_teacher_evaluation_profile(saved_path.name, text, content)
-    saved = save_teacher_evaluation_profile(profile)
-
-    return {
-        "message": "Teacher evaluation saved",
-        "file_name": saved_path.name,
-        "saved_path": str(saved_path),
-        "applicant_name": saved.get("applicant_name", ""),
-        "teacher_report_rating_5": saved.get("teacher_report_rating_5", ""),
-        "academic_ranking": saved.get("academic_ranking", ""),
-    }
+    saved = save_teacher_evaluation_profile(profile, student_id)
+    return saved
 
 @app.get("/applications.xlsx")
 def download_applications_excel():
