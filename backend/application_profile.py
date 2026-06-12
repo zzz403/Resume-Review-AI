@@ -1,10 +1,13 @@
 import json
 import io
+import logging
 import os
 import re
 from dataclasses import dataclass
 
 import llm
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,22 @@ class TextMatch:
 
 
 def extract_application_profile(filename: str, text: str, content: bytes | None = None) -> dict:
+    """Extract the application profile via the LLM structured-output path, falling
+    back to the legacy regex pipeline on any failure."""
+    try:
+        import llm_extract
+
+        if llm.is_configured(llm.get_vision_provider()) or llm.is_configured(llm.get_text_provider()):
+            profile = llm_extract.extract_application_profile_ai(filename, text, content)
+            if profile.get("applicant_name") or profile.get("school"):
+                return profile
+            logger.warning("LLM application extraction returned no name/school; using legacy path.")
+    except Exception:  # noqa: BLE001 - any LLM/render failure falls back
+        logger.warning("LLM application extraction failed; using legacy path.", exc_info=True)
+    return _extract_application_profile_legacy(filename, text, content)
+
+
+def _extract_application_profile_legacy(filename: str, text: str, content: bytes | None = None) -> dict:
     sections = _classify_application_sections(text)
     form_courses = _extract_form_course_grades(sections.form_text)
     transcript_courses = _extract_course_grades(sections.transcript_text or text)

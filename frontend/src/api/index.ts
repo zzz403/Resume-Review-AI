@@ -49,6 +49,34 @@ export async function deleteStudent(studentId: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete student')
 }
 
+export async function updateStudent(
+  studentId: string,
+  updates: Record<string, string | number | boolean | null>,
+): Promise<StudentDetail> {
+  const res = await fetch(`${API_BASE}/students/${studentId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updates }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.detail ?? 'Failed to save changes')
+  }
+  return res.json()
+}
+
+// Direct URLs to the stored source documents — the PDF viewer loads these in an
+// iframe; a `v` cache-buster forces a reload after a fresh upload replaces a file.
+export function applicationFileUrl(studentId: string, version?: string | number): string {
+  const q = version ? `?v=${encodeURIComponent(String(version))}` : ''
+  return `${API_BASE}/students/${studentId}/files/application${q}`
+}
+
+export function teacherEvaluationFileUrl(studentId: string, version?: string | number): string {
+  const q = version ? `?v=${encodeURIComponent(String(version))}` : ''
+  return `${API_BASE}/students/${studentId}/files/teacher-evaluation${q}`
+}
+
 export async function submitApplication(studentId: string, file: File): Promise<StudentDetail> {
   const form = new FormData()
   form.append('file', file)

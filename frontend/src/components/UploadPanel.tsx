@@ -38,11 +38,11 @@ export function UploadPanel({
       <p className="label">{label}</p>
 
       <div
-        className={`dropzone ${dragging ? 'dragging' : ''} ${fileName ? 'has-file' : ''}`}
-        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        className={`dropzone ${dragging ? 'dragging' : ''} ${fileName ? 'has-file' : ''} ${loading ? 'processing' : ''}`}
+        onDragOver={(e) => { if (!loading) { e.preventDefault(); setDragging(true) } }}
         onDragLeave={() => setDragging(false)}
-        onDrop={handleDrop}
-        onClick={() => inputRef.current?.click()}
+        onDrop={(e) => { if (!loading) handleDrop(e) }}
+        onClick={() => { if (!loading) inputRef.current?.click() }}
       >
         <input
           ref={inputRef}
@@ -54,11 +54,17 @@ export function UploadPanel({
             if (file) onFileSelect(file)
           }}
         />
-        {fileName ? (
+        {loading ? (
+          <div className="file-selected">
+            <span className="spinner spinner-lg" aria-hidden="true" />
+            <span className="file-name">{fileName}</span>
+            <span className="file-change">{loadingLabel}</span>
+          </div>
+        ) : fileName ? (
           <div className="file-selected">
             <span className="file-icon">📄</span>
             <span className="file-name">{fileName}</span>
-            <span className="file-change">{loading ? loadingLabel : 'Click to change'}</span>
+            <span className="file-change">Click to change</span>
           </div>
         ) : (
           <div className="dropzone-hint">
@@ -69,6 +75,8 @@ export function UploadPanel({
           </div>
         )}
       </div>
+
+      {loading && <div className="indeterminate upload-progress" aria-hidden="true" />}
 
       <button
         className="btn-primary"

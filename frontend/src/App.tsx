@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
+import { ProcessingBar } from './components/ProcessingBar'
 import { UploadPanel } from './components/UploadPanel'
+import { StudentReview } from './components/StudentReview'
+import { Toast, type ToastState } from './components/Toast'
 import {
   API_BASE,
   clearApplicationData,
@@ -11,6 +14,7 @@ import {
   saveLlmSettings,
   submitApplication,
   submitTeacherEvaluation,
+  updateStudent,
 } from './api'
 import type { StudentDetail, StudentSummary } from './types'
 
@@ -59,8 +63,33 @@ const TEACHER_FIELDS: [string, string][] = [
   ['Teacher evaluation note', 'teacher_evaluation_note'],
 ]
 
+// Per-student in-flight upload tracking, kept at App level so the roster can
+// keep showing "AI processing…" even after the user navigates away from detail.
+interface ProcState {
+  app: boolean
+  teacher: boolean
+  startedAt: number
+}
+
 function nonEmpty(value: unknown): boolean {
   return value !== '' && value !== null && value !== undefined
+}
+
+// Keys whose value actually changed between two student snapshots — used to
+// briefly highlight the fields the AI just wrote.
+function changedFieldKeys(before: StudentDetail | null, after: StudentDetail | null): Set<string> {
+  const keys = new Set<string>()
+  if (!after) return keys
+  const all = new Set([...Object.keys(before ?? {}), ...Object.keys(after)])
+  for (const k of all) {
+    if (String(before?.[k] ?? '') !== String(after[k] ?? '')) keys.add(k)
+  }
+  return keys
+}
+
+function countFilled(detail: StudentDetail | null, fields: [string, string][]): number {
+  if (!detail) return 0
+  return fields.filter(([, key]) => nonEmpty(detail[key])).length
 }
 
 function hasAny(detail: StudentDetail | null, fields: [string, string][]): boolean {
@@ -96,6 +125,10 @@ function rosterStatus(s: StudentSummary): { label: string; cls: string } {
 
 export default function App() {
   const [view, setView] = useState<'roster' | 'detail'>('roster')
+  // The detail page opens in read-only "summary" mode; the editable PDF + form
+  // workspace is entered explicitly via the Edit button so the upload-first flow
+  // stays the default.
+  const [editMode, setEditMode] = useState(false)
   const [students, setStudents] = useState<StudentSummary[]>([])
   const [search, setSearch] = useState('')
   const [newName, setNewName] = useState('')
@@ -107,6 +140,9 @@ export default function App() {
   const [teacherFileName, setTeacherFileName] = useState<string | null>(null)
   const [uploadingApp, setUploadingApp] = useState(false)
   const [uploadingTeacher, setUploadingTeacher] = useState(false)
+  const [processing, setProcessing] = useState<Record<string, ProcState>>({})
+  const [changedKeys, setChangedKeys] = useState<Set<string>>(new Set())
+  const [toast, setToast] = useState<ToastState | null>(null)
 
   const [showSettings, setShowSettings] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -133,6 +169,51 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // Auto-dismiss toasts: success is brief, error lingers a bit longer.
+  useEffect(() => {
+    if (!toast) return
+    const id = setTimeout(() => setToast(null), toast.kind === 'success' ? 3200 : 6000)
+    return () => clearTimeout(id)
+  }, [toast])
+
+  // Clear the "just updated" highlight shortly after it plays.
+  useEffect(() => {
+    if (changedKeys.size === 0) return
+    const id = setTimeout(() => setChangedKeys(new Set()), 1800)
+    return () => clearTimeout(id)
+  }, [changedKeys])
+
+  function startProcessing(studentId: string, kind: 'app' | 'teacher') {
+    setProcessing((prev) => {
+      const existing = prev[studentId]
+      return {
+        ...prev,
+        [studentId]: {
+          app: kind === 'app' ? true : existing?.app ?? false,
+          teacher: kind === 'teacher' ? true : existing?.teacher ?? false,
+          startedAt: existing?.startedAt ?? Date.now(),
+        },
+      }
+    })
+  }
+
+  function stopProcessing(studentId: string, kind: 'app' | 'teacher') {
+    setProcessing((prev) => {
+      const existing = prev[studentId]
+      if (!existing) return prev
+      const next: ProcState = {
+        ...existing,
+        app: kind === 'app' ? false : existing.app,
+        teacher: kind === 'teacher' ? false : existing.teacher,
+      }
+      if (!next.app && !next.teacher) {
+        const { [studentId]: _drop, ...rest } = prev
+        return rest
+      }
+      return { ...prev, [studentId]: next }
+    })
+  }
 
   useEffect(() => {
     refreshStudents()
@@ -177,6 +258,7 @@ export default function App() {
     setError(null)
     setSelectedId(studentId)
     setDetail(null)
+    setEditMode(false)
     setView('detail')
     try {
       const data = await getStudent(studentId)
@@ -190,33 +272,65 @@ export default function App() {
 
   async function handleAppFile(file: File) {
     if (!selectedId) return
+    const studentId = selectedId
+    const before = detail
     setAppFileName(file.name)
     setError(null)
     setUploadingApp(true)
+    startProcessing(studentId, 'app')
     try {
-      const updated = await submitApplication(selectedId, file)
+      const updated = await submitApplication(studentId, file)
       setDetail(updated)
+      setChangedKeys(changedFieldKeys(before, updated))
       refreshStudents()
+      setToast({ kind: 'success', text: `Application processed · ${countFilled(updated, APPLICATION_FIELDS)} fields read` })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not submit this application.')
+      const msg = err instanceof Error ? err.message : 'Could not submit this application.'
+      setError(msg)
+      setToast({ kind: 'error', text: 'AI processing failed — no results were saved for the application.' })
     } finally {
       setUploadingApp(false)
+      stopProcessing(studentId, 'app')
     }
   }
 
   async function handleTeacherFile(file: File) {
     if (!selectedId) return
+    const studentId = selectedId
+    const before = detail
     setTeacherFileName(file.name)
     setError(null)
     setUploadingTeacher(true)
+    startProcessing(studentId, 'teacher')
     try {
-      const updated = await submitTeacherEvaluation(selectedId, file)
+      const updated = await submitTeacherEvaluation(studentId, file)
       setDetail(updated)
+      setChangedKeys(changedFieldKeys(before, updated))
       refreshStudents()
+      setToast({ kind: 'success', text: `Teacher evaluation processed · ${countFilled(updated, TEACHER_FIELDS)} fields read` })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not submit this teacher evaluation.')
+      const msg = err instanceof Error ? err.message : 'Could not submit this teacher evaluation.'
+      setError(msg)
+      setToast({ kind: 'error', text: 'AI processing failed — no results were saved for the teacher evaluation.' })
     } finally {
       setUploadingTeacher(false)
+      stopProcessing(studentId, 'teacher')
+    }
+  }
+
+  async function handleSaveEdits(updates: Record<string, string>) {
+    if (!selectedId) return
+    try {
+      const updated = await updateStudent(selectedId, updates)
+      setDetail(updated)
+      refreshStudents()
+      const n = Object.keys(updates).length
+      setToast({ kind: 'success', text: `Saved · ${n} field${n === 1 ? '' : 's'} updated` })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not save your changes.'
+      setError(msg)
+      setToast({ kind: 'error', text: 'Changes could not be saved.' })
+      throw err
     }
   }
 
@@ -288,6 +402,13 @@ export default function App() {
 
   const detailHasApp = hasAny(detail, APPLICATION_FIELDS)
   const detailHasTeacher = hasAny(detail, TEACHER_FIELDS)
+
+  const activeProc = selectedId ? processing[selectedId] : undefined
+  const procLabel = activeProc?.app && activeProc?.teacher
+    ? 'AI is analyzing the application & teacher evaluation'
+    : activeProc?.teacher
+      ? 'AI is analyzing the teacher evaluation'
+      : 'AI is analyzing the application'
 
   return (
     <div className="app">
@@ -435,6 +556,8 @@ export default function App() {
                 <tbody>
                   {filtered.map((s) => {
                     const status = rosterStatus(s)
+                    const proc = processing[s.student_id]
+                    const isProcessing = !!(proc && (proc.app || proc.teacher))
                     return (
                       <tr key={s.student_id} className="roster-row" onClick={() => openStudent(s.student_id)}>
                         <td>
@@ -448,7 +571,13 @@ export default function App() {
                         </td>
                         <td>{s.school || '—'}</td>
                         <td className="num">{s.current_grade || '—'}</td>
-                        <td><span className={`pill ${status.cls}`}>{status.label}</span></td>
+                        <td>
+                          {isProcessing ? (
+                            <span className="pill pill-proc"><span className="spinner" aria-hidden="true" />AI processing…</span>
+                          ) : (
+                            <span className={`pill ${status.cls}`}>{status.label}</span>
+                          )}
+                        </td>
                         <td className="num"><ScoreChip value={s.resume_rating_10} max={10} /></td>
                         <td className="num"><ScoreChip value={s.cover_letter_rating_10} max={10} /></td>
                         <td className="num"><ScoreChip value={s.stem_statement_rating_10} max={10} /></td>
@@ -464,9 +593,12 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div className="submission-layout">
-          <button className="back-link" onClick={() => { setView('roster'); refreshStudents() }}>
-            ← Back to all students
+        <div className={`submission-layout ${editMode ? 'review-mode' : ''}`}>
+          <button
+            className="back-link"
+            onClick={() => { if (editMode) { setEditMode(false) } else { setView('roster'); refreshStudents() } }}
+          >
+            {editMode ? '← Back to summary' : '← Back to all students'}
           </button>
           <div className="detail-header">
             <Monogram name={(detail?.applicant_name as string) || ''} />
@@ -482,41 +614,84 @@ export default function App() {
                 <span className={`pill ${detailHasTeacher ? 'pill-good' : 'pill-muted'}`}>
                   {detailHasTeacher ? 'Teacher eval ✓' : 'No teacher eval'}
                 </span>
+                {!editMode ? (
+                  <button
+                    className="btn-primary edit-toggle"
+                    onClick={() => setEditMode(true)}
+                    disabled={!detailHasApp && !detailHasTeacher}
+                    title={!detailHasApp && !detailHasTeacher ? 'Upload a document first' : 'Edit fields against the source PDF'}
+                  >
+                    ✎ Edit &amp; review
+                  </button>
+                ) : (
+                  <button className="btn-ghost edit-toggle" onClick={() => setEditMode(false)}>
+                    ✓ Done
+                  </button>
+                )}
               </div>
             )}
           </div>
 
-          <div className="upload-row">
-            <UploadPanel
-              onFileSelect={handleAppFile}
-              fileName={appFileName}
-              submitted={detailHasApp}
-              loading={uploadingApp}
-              label="Application"
-              emptyTitle="Drop the application here"
-              savedLabel="Application Processed"
-              loadingLabel="Processing…"
-              buttonIdleLabel="Application"
-            />
-            <UploadPanel
-              onFileSelect={handleTeacherFile}
-              fileName={teacherFileName}
-              submitted={detailHasTeacher}
-              loading={uploadingTeacher}
-              label="Teacher Evaluation"
-              emptyTitle="Drop the teacher evaluation here"
-              savedLabel="Teacher Evaluation Processed"
-              loadingLabel="Processing…"
-              buttonIdleLabel="Teacher Evaluation"
-            />
-          </div>
+          {activeProc && (activeProc.app || activeProc.teacher) && (
+            <ProcessingBar startedAt={activeProc.startedAt} label={procLabel} />
+          )}
 
-          <div className="panel result-panel">
-            {(uploadingApp || uploadingTeacher) && <p className="placeholder">Processing with AI…</p>}
-            <FieldGroup title="Application" detail={detail} fields={APPLICATION_FIELDS} empty="No application uploaded yet." />
-            <FieldGroup title="Teacher Evaluation" detail={detail} fields={TEACHER_FIELDS} empty="No teacher evaluation uploaded yet." />
-            <button className="btn-danger" onClick={handleDeleteStudent}>Delete student</button>
-          </div>
+          {!detail ? (
+            <div className="panel result-panel">
+              <p className="placeholder">Loading…</p>
+            </div>
+          ) : editMode ? (
+            <StudentReview
+              studentId={selectedId as string}
+              detail={detail}
+              onUploadApp={handleAppFile}
+              onUploadTeacher={handleTeacherFile}
+              uploadingApp={uploadingApp}
+              uploadingTeacher={uploadingTeacher}
+              changedKeys={changedKeys}
+              onSave={handleSaveEdits}
+              onDelete={handleDeleteStudent}
+            />
+          ) : (
+            <>
+              <div className="upload-row">
+                <UploadPanel
+                  onFileSelect={handleAppFile}
+                  fileName={appFileName}
+                  submitted={detailHasApp}
+                  loading={uploadingApp}
+                  label="Application"
+                  emptyTitle="Drop the application here"
+                  savedLabel="Application Processed"
+                  loadingLabel="Processing…"
+                  buttonIdleLabel="Application"
+                />
+                <UploadPanel
+                  onFileSelect={handleTeacherFile}
+                  fileName={teacherFileName}
+                  submitted={detailHasTeacher}
+                  loading={uploadingTeacher}
+                  label="Teacher Evaluation"
+                  emptyTitle="Drop the teacher evaluation here"
+                  savedLabel="Teacher Evaluation Processed"
+                  loadingLabel="Processing…"
+                  buttonIdleLabel="Teacher Evaluation"
+                />
+              </div>
+
+              <div className="panel result-panel">
+                <FieldGroup title="Application" detail={detail} fields={APPLICATION_FIELDS} empty="No application uploaded yet." loading={uploadingApp} changedKeys={changedKeys} />
+                <FieldGroup title="Teacher Evaluation" detail={detail} fields={TEACHER_FIELDS} empty="No teacher evaluation uploaded yet." loading={uploadingTeacher} changedKeys={changedKeys} />
+                <button className="btn-danger" onClick={handleDeleteStudent}>Delete student</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {toast && (
+        <div className="toast-wrap">
+          <Toast kind={toast.kind} text={toast.text} onClose={() => setToast(null)} />
         </div>
       )}
     </div>
@@ -528,25 +703,35 @@ function FieldGroup({
   detail,
   fields,
   empty,
+  loading = false,
+  changedKeys,
 }: {
   title: string
   detail: StudentDetail | null
   fields: [string, string][]
   empty: string
+  loading?: boolean
+  changedKeys?: Set<string>
 }) {
   const rows = detail ? fields.filter(([, key]) => nonEmpty(detail[key])) : []
   return (
     <div className="field-group">
       <div className="field-group-title">
         <p className="score-label">{title}</p>
-        <span className={`pill ${rows.length ? 'pill-good' : 'pill-muted'}`}>{rows.length ? `${rows.length} fields` : 'empty'}</span>
+        {loading ? (
+          <span className="pill pill-proc"><span className="spinner" aria-hidden="true" />reading…</span>
+        ) : (
+          <span className={`pill ${rows.length ? 'pill-good' : 'pill-muted'}`}>{rows.length ? `${rows.length} fields` : 'empty'}</span>
+        )}
       </div>
-      {rows.length === 0 ? (
+      {loading ? (
+        <FieldSkeleton />
+      ) : rows.length === 0 ? (
         <p className="placeholder">{empty}</p>
       ) : (
         <dl className="field-list">
           {rows.map(([label, key]) => (
-            <div className="field-row" key={key}>
+            <div className={`field-row ${changedKeys?.has(key) ? 'field-flash' : ''}`} key={key}>
               <dt>{label}</dt>
               <dd>{String(detail?.[key])}</dd>
             </div>
@@ -556,3 +741,18 @@ function FieldGroup({
     </div>
   )
 }
+
+function FieldSkeleton() {
+  const widths = ['mid', 'wide', 'short', 'wide', 'mid'] as const
+  return (
+    <div className="skeleton-list">
+      {widths.map((w, i) => (
+        <div className="skeleton-row" key={i}>
+          <span className="skeleton-bar short" />
+          <span className={`skeleton-bar ${w}`} />
+        </div>
+      ))}
+    </div>
+  )
+}
+

@@ -143,6 +143,43 @@ def save_application_profile(profile: dict, student_id: str) -> dict:
     return rows[index]
 
 
+# Fields a teacher is allowed to edit by hand after the AI has read a document.
+# Identity/bookkeeping columns and the on-disk file names are deliberately excluded
+# so an edit can never orphan a stored PDF or rewrite a student's id.
+PROTECTED_COLUMNS = {
+    "student_id",
+    "created_at",
+    "file_name",
+    "teacher_evaluation_file_name",
+}
+EDITABLE_COLUMNS = {c for c in COLUMNS if c not in PROTECTED_COLUMNS} | {"features"}
+
+
+def update_student_fields(student_id: str, updates: dict) -> dict:
+    """Apply hand-entered field edits onto a student's row.
+
+    Unlike the AI merge helpers, this writes values verbatim — including blanks —
+    so a teacher can both correct and clear a field. Unknown or protected keys are
+    ignored rather than rejected, keeping the endpoint forgiving of stray payload.
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    rows = _read_rows()
+    index = _find_by_id(rows, student_id)
+    if index is None:
+        raise KeyError(student_id)
+
+    row = dict(rows[index])
+    for key, value in updates.items():
+        if key not in EDITABLE_COLUMNS:
+            continue
+        row[key] = "" if value is None else value
+    row["submitted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    rows[index] = row
+    _write_json(rows)
+    _write_xlsx(rows)
+    return row
+
+
 def save_teacher_evaluation_profile(profile: dict, student_id: str) -> dict:
     """Merge an extracted teacher-evaluation profile into the given student's row."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)

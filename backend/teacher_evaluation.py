@@ -1,11 +1,30 @@
 import io
 import json
+import logging
 import re
 
 import llm
 
+logger = logging.getLogger(__name__)
+
 
 def extract_teacher_evaluation_profile(filename: str, text: str, content: bytes | None = None) -> dict:
+    """Extract the teacher-evaluation profile via the LLM structured-output path,
+    falling back to the legacy regex pipeline on any failure."""
+    try:
+        import llm_extract
+
+        if llm.is_configured(llm.get_vision_provider()) or llm.is_configured(llm.get_text_provider()):
+            profile = llm_extract.extract_teacher_evaluation_ai(filename, text, content)
+            if profile.get("teacher_evaluation_total_score") or profile.get("teacher_comments") or profile.get("academic_ranking"):
+                return profile
+            logger.warning("LLM teacher-evaluation extraction returned nothing usable; using legacy path.")
+    except Exception:  # noqa: BLE001 - any LLM/render failure falls back
+        logger.warning("LLM teacher-evaluation extraction failed; using legacy path.", exc_info=True)
+    return _extract_teacher_evaluation_profile_legacy(filename, text, content)
+
+
+def _extract_teacher_evaluation_profile_legacy(filename: str, text: str, content: bytes | None = None) -> dict:
     total_score = _extract_total_score(text)
     visual_fields = _ai_extract_teacher_evaluation_from_image(content) if content and total_score is None else {}
     score_source = "text" if total_score is not None else ""

@@ -23,6 +23,7 @@ from excel_store import (
     list_students,
     save_application_profile,
     save_teacher_evaluation_profile,
+    update_student_fields,
 )
 from extractor import extract_text
 from teacher_evaluation import extract_teacher_evaluation_profile
@@ -38,6 +39,8 @@ app.add_middleware(
         "http://127.0.0.1:3001",
         "http://localhost:3002",
         "http://127.0.0.1:3002",
+        "http://localhost:3004",
+        "http://127.0.0.1:3004",
     ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,8 +61,22 @@ class StudentCreateRequest(BaseModel):
     email: str = ""
 
 
+class StudentUpdateRequest(BaseModel):
+    updates: dict[str, str | int | float | bool | None]
+
+
 RESUME_REVIEW_DIR = Path(__file__).resolve().parents[2]
 TEACHER_EVALUATION_DIR = RESUME_REVIEW_DIR / "teacher_evaluations"
+APPLICATION_DIR = RESUME_REVIEW_DIR / "applications"
+
+INLINE_MEDIA_TYPES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 
 @app.post("/extract")
 async def extract(file: UploadFile = File(...)):
@@ -107,8 +124,15 @@ async def submit_application(student_id: str, file: UploadFile = File(...)):
     if not text.strip():
         raise HTTPException(status_code=422, detail="Could not extract text from this file")
 
+    # Persist the original file so the reviewer can read it side-by-side with the
+    # AI's fields and correct them against the source.
+    APPLICATION_DIR.mkdir(parents=True, exist_ok=True)
+    file_name = _safe_file_name(file.filename or "application")
+    saved_path = _unique_path(APPLICATION_DIR / file_name)
+    saved_path.write_bytes(content)
+
     profile = extract_application_profile(file.filename or "", text, content)
-    profile.setdefault("file_name", _safe_file_name(file.filename or "application"))
+    profile["file_name"] = saved_path.name
     saved = save_application_profile(profile, student_id)
     return saved
 
@@ -130,6 +154,34 @@ async def submit_teacher_evaluation(student_id: str, file: UploadFile = File(...
     saved = save_teacher_evaluation_profile(profile, student_id)
     return saved
 
+@app.patch("/students/{student_id}")
+def edit_student(student_id: str, request: StudentUpdateRequest):
+    if get_student(student_id) is None:
+        raise HTTPException(status_code=404, detail="Student not found.")
+    try:
+        return update_student_fields(student_id, request.updates)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Student not found.") from exc
+
+
+@app.get("/students/{student_id}/files/application")
+def get_application_file(student_id: str):
+    student = get_student(student_id)
+    if student is None:
+        raise HTTPException(status_code=404, detail="Student not found.")
+    return _serve_stored_file(APPLICATION_DIR, student.get("file_name"), "application")
+
+
+@app.get("/students/{student_id}/files/teacher-evaluation")
+def get_teacher_evaluation_file(student_id: str):
+    student = get_student(student_id)
+    if student is None:
+        raise HTTPException(status_code=404, detail="Student not found.")
+    return _serve_stored_file(
+        TEACHER_EVALUATION_DIR, student.get("teacher_evaluation_file_name"), "teacher evaluation"
+    )
+
+
 @app.get("/applications.xlsx")
 def download_applications_excel():
     return FileResponse(
@@ -141,11 +193,13 @@ def download_applications_excel():
 @app.delete("/application-data")
 def delete_application_data():
     cleared = clear_application_data()
-    removed_teacher_evaluations = _clear_teacher_evaluation_files()
+    removed_teacher_evaluations = _clear_dir_files(TEACHER_EVALUATION_DIR)
+    removed_applications = _clear_dir_files(APPLICATION_DIR)
     return {
         "message": "Application data cleared",
         "removed_data_files": cleared["removed_files"],
         "removed_teacher_evaluations": removed_teacher_evaluations,
+        "removed_applications": removed_applications,
         "excel_path": cleared["excel_path"],
     }
 
@@ -213,6 +267,22 @@ def history():
     return fetch_history()
 
 
+def _serve_stored_file(directory: Path, file_name: object, label: str) -> FileResponse:
+    if not file_name:
+        raise HTTPException(status_code=404, detail=f"No {label} file on record.")
+    path = directory / str(file_name)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail=f"The stored {label} file is missing.")
+    media_type = INLINE_MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
+    # inline so the browser previews PDFs/images in the viewer rather than downloading.
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type="inline",
+    )
+
+
 def _safe_file_name(file_name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._ -]+", "_", Path(file_name).name).strip()
     return cleaned or "teacher_evaluation"
@@ -231,12 +301,12 @@ def _unique_path(path: Path) -> Path:
     raise HTTPException(status_code=500, detail="Could not create unique file name")
 
 
-def _clear_teacher_evaluation_files() -> list[str]:
-    if not TEACHER_EVALUATION_DIR.exists():
+def _clear_dir_files(directory: Path) -> list[str]:
+    if not directory.exists():
         return []
 
     removed = []
-    for path in TEACHER_EVALUATION_DIR.iterdir():
+    for path in directory.iterdir():
         if not path.is_file():
             continue
         path.unlink()
