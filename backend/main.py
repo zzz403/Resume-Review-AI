@@ -30,18 +30,21 @@ from teacher_evaluation import extract_teacher_evaluation_profile
 
 app = FastAPI()
 
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3002",
+]
+# Extra origins (e.g. a non-default local dev port) come from the environment so
+# the repo ships the default 3000-3002 set and each machine adds its own via .env.
+_extra_cors_origins = [origin.strip() for origin in os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:3002",
-        "http://127.0.0.1:3002",
-        "http://localhost:3004",
-        "http://127.0.0.1:3004",
-    ],
+    allow_origins=_DEFAULT_CORS_ORIGINS + _extra_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

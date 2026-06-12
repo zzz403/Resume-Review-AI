@@ -12,3 +12,12 @@ backend/*.pyc
 
 # OS
 .DS_Store
+
+# Sample/applicant PDFs (contain PII — never commit)
+*.pdf
+
+# Local dev / analysis scripts (hardcode sample PII)
+backend/bench_models.py
+backend/bench_effort.py
+backend/prototype_llm_extract.py
+changes-summary.html

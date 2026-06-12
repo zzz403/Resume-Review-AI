@@ -172,13 +172,20 @@ def _openai_structured(prompt: str, schema: dict, schema_name: str, max_tokens: 
     for png in images or []:
         encoded = base64.b64encode(png).decode("ascii")
         content.append({"type": "input_image", "image_url": f"data:image/png;base64,{encoded}"})
+    kwargs: dict = {
+        "model": _model("openai"),
+        "input": [{"role": "user", "content": content}],
+        "max_output_tokens": max_tokens,
+        "text": {"format": {"type": "json_schema", "name": schema_name, "schema": schema, "strict": True}},
+    }
+    # Reasoning effort is the biggest cost/latency lever for gpt-5 models. Lower
+    # effort (minimal|low|medium|high) cuts reasoning tokens dramatically; "low"
+    # keeps a safety margin for messy scans/handwriting. Default low.
+    effort = os.getenv("OPENAI_REASONING_EFFORT", "low").strip().lower()
+    if effort in {"minimal", "low", "medium", "high"}:
+        kwargs["reasoning"] = {"effort": effort}
     try:
-        resp = client.responses.create(
-            model=_model("openai"),
-            input=[{"role": "user", "content": content}],
-            max_output_tokens=max_tokens,
-            text={"format": {"type": "json_schema", "name": schema_name, "schema": schema, "strict": True}},
-        )
+        resp = client.responses.create(**kwargs)
     except Exception as exc:  # noqa: BLE001
         raise _normalize_error(exc) from exc
     return json.loads(resp.output_text or "{}")
