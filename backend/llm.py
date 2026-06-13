@@ -18,6 +18,7 @@ behind it.
 import base64
 import json
 import os
+import re
 
 from dotenv import load_dotenv
 
@@ -290,7 +291,9 @@ def validate_key(api_key: str, provider: str | None = None) -> None:
     prev_provider = os.environ.get("LLM_PROVIDER")
     os.environ["LLM_PROVIDER"] = provider
     try:
-        complete("Reply OK.", max_tokens=5, temperature=0)
+        # OpenAI's Responses API requires max_output_tokens >= 16, so keep the
+        # validation request at that floor (other providers accept it fine too).
+        complete("Reply OK.", max_tokens=16, temperature=0)
     finally:
         if prev is None:
             os.environ.pop(_PROVIDERS[provider][0], None)
@@ -382,6 +385,13 @@ def _gemini_complete(prompt: str, max_tokens: int, temperature: float, image_png
     return resp.text or ""
 
 
+def _is_openai_reasoning_model(model: str) -> bool:
+    """gpt-5* and o-series (o1/o3/o4...) are reasoning models that don't accept
+    `temperature` and use `reasoning.effort` instead."""
+    m = model.strip().lower()
+    return m.startswith("gpt-5") or bool(re.match(r"o\d", m))
+
+
 def _openai_complete(prompt: str, max_tokens: int, temperature: float, image_png: bytes | None) -> str:
     from openai import OpenAI
 
@@ -396,13 +406,23 @@ def _openai_complete(prompt: str, max_tokens: int, temperature: float, image_png
             }
         )
 
+    model = _model("openai")
+    kwargs: dict = {
+        "model": model,
+        "input": [{"role": "user", "content": content}],
+        "max_output_tokens": max_tokens,
+    }
+    # gpt-5/o-series are reasoning models: they reject `temperature` and instead
+    # take a `reasoning.effort` knob (mirrors _openai_structured). Other models
+    # (e.g. gpt-4o) still honour temperature.
+    if _is_openai_reasoning_model(model):
+        effort = os.getenv("OPENAI_REASONING_EFFORT", "low").strip().lower()
+        if effort in {"minimal", "low", "medium", "high"}:
+            kwargs["reasoning"] = {"effort": effort}
+    else:
+        kwargs["temperature"] = temperature
     try:
-        resp = client.responses.create(
-            model=_model("openai"),
-            input=[{"role": "user", "content": content}],
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-        )
+        resp = client.responses.create(**kwargs)
     except Exception as exc:  # noqa: BLE001
         raise _normalize_error(exc) from exc
     return resp.output_text or ""
