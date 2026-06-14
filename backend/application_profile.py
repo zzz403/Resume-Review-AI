@@ -133,8 +133,8 @@ def _extract_application_profile_legacy(filename: str, text: str, content: bytes
         "resume_notes": _resume_notes(resume_text),
         "features_technical_experience": resume_features["experience"],
         "features_technical_skills": resume_features["skills"],
-        "volunteer_experience": _has_any(text, ["volunteer", "community involvement"]),
-        "previous_research_experience": _has_previous_research_experience(resume_text, stem_statement),
+        "volunteer_experience": "Yes" if _has_any(text, ["volunteer", "community involvement"]) else "No",
+        "previous_research_experience": "Yes" if _has_previous_research_experience(resume_text, stem_statement) else "No",
         "career_goals": _career_goals(stem_statement),
         "stem_statement_rating_10": stem_evaluation["score"],
         "stem_statement_notes": stem_evaluation["notes"],
@@ -2442,23 +2442,29 @@ def _answers_valuable_candidate_question(text: str) -> bool:
 
 
 def _commitment_to_stem(resume_text: str, stem_statement: str, courses: list[CourseGrade]) -> str:
-    evidence = []
-
-    experience = _stem_experience_summary(resume_text)
-    if experience:
-        evidence.append(experience)
-
-    awards = _stem_awards_summary(resume_text)
-    if awards:
-        evidence.append(awards)
-
-    motivation = _stem_motivation_summary(stem_statement)
-    if motivation:
-        evidence.append(motivation)
-
+    evidence = _stem_commitment_evidence(resume_text, stem_statement)
     if not evidence:
         return "Limited explicit STEM skills or experience found."
-    return " ".join(evidence)
+    if len(evidence) == 1:
+        return f"Shows STEM commitment through {evidence[0]}."
+    return f"Shows STEM commitment through {', '.join(evidence[:-1])}, and {evidence[-1]}."
+
+
+def _stem_commitment_evidence(resume_text: str, stem_statement: str) -> list[str]:
+    text = f"{resume_text}\n{stem_statement}".lower()
+    evidence = []
+    checks = [
+        ("robotics or engineering activities", ["robotics", "engineering", "first tech challenge", "ftc", "device", "design"]),
+        ("programming or technical skills", ["programming", "coding", "python", "java", "javascript", "computer science", "software"]),
+        ("science, lab, or research interests", ["science", "biology", "chemistry", "physics", "lab", "research", "experiment"]),
+        ("healthcare or medical interests", ["medicine", "medical", "healthcare", "hospital", "patient", "clinical"]),
+        ("STEM teaching, tutoring, or outreach", ["tutor", "mentor", "camp counsellor", "camp counselor", "teaching", "workshop"]),
+        ("relevant awards or certifications", ["award", "certificate", "certification", "distinction", "honou?r roll", "first aid", "cpr"]),
+    ]
+    for label, terms in checks:
+        if any(re.search(rf"\b{term}\b", text, re.IGNORECASE) for term in terms):
+            evidence.append(label)
+    return evidence[:4]
 
 
 def _stem_course_summary(courses: list[CourseGrade]) -> str:

@@ -33,6 +33,7 @@ const KEY_PLACEHOLDERS: Record<string, string> = {
 }
 
 const APPLICATION_FIELDS: [string, string][] = [
+  ['Application note', 'general_application_note'],
   ['School', 'school'],
   ['City', 'city'],
   ['Grade', 'current_grade'],
@@ -51,16 +52,15 @@ const APPLICATION_FIELDS: [string, string][] = [
   ['Previous research', 'previous_research_experience'],
   ['Career goals', 'career_goals'],
   ['Commitment to STEM', 'commitment_to_stem'],
-  ['Application note', 'general_application_note'],
   ['Sunnybrook form note', 'sunnybrook_form_note'],
 ]
 
 const TEACHER_FIELDS: [string, string][] = [
+  ['Teacher evaluation note', 'teacher_evaluation_note'],
   ['Teacher report /5', 'teacher_report_rating_5'],
   ['Teacher total score', 'teacher_evaluation_total_score'],
   ['Academic ranking', 'academic_ranking'],
   ['Teacher comments', 'teacher_comments'],
-  ['Teacher evaluation note', 'teacher_evaluation_note'],
 ]
 
 // Per-student in-flight upload tracking, kept at App level so the roster can
@@ -69,6 +69,11 @@ interface ProcState {
   app: boolean
   teacher: boolean
   startedAt: number
+}
+
+interface DuplicateCandidate {
+  requestedName: string
+  existing: StudentSummary
 }
 
 function nonEmpty(value: unknown): boolean {
@@ -123,6 +128,19 @@ function rosterStatus(s: StudentSummary): { label: string; cls: string } {
   return { label: 'Empty', cls: 'pill-muted' }
 }
 
+function normalizedName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function displayValue(key: string, value: unknown): string {
+  if (!nonEmpty(value)) return 'null'
+  if (key === 'volunteer_experience' || key === 'previous_research_experience') {
+    if (value === true || value === 'true') return 'Yes'
+    if (value === false || value === 'false') return 'No'
+  }
+  return String(value)
+}
+
 export default function App() {
   const [view, setView] = useState<'roster' | 'detail'>('roster')
   // The detail page opens in read-only "summary" mode; the editable PDF + form
@@ -133,6 +151,7 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
+  const [duplicateCandidate, setDuplicateCandidate] = useState<DuplicateCandidate | null>(null)
 
   const [detail, setDetail] = useState<StudentDetail | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -237,14 +256,24 @@ export default function App() {
       .catch(() => setError('Could not load students.'))
   }
 
-  async function handleCreate() {
+  async function handleCreate(allowDuplicate = false) {
     const name = newName.trim()
     if (!name) return
     setCreating(true)
     setError(null)
     try {
+      if (!allowDuplicate) {
+        const latestStudents = await getStudents()
+        setStudents(latestStudents)
+        const duplicate = latestStudents.find((s) => normalizedName(s.applicant_name) === normalizedName(name))
+        if (duplicate) {
+          setDuplicateCandidate({ requestedName: name, existing: duplicate })
+          return
+        }
+      }
       const student = await createStudent(name)
       setNewName('')
+      setDuplicateCandidate(null)
       refreshStudents()
       openStudent(student.student_id)
     } catch (err) {
@@ -252,6 +281,14 @@ export default function App() {
     } finally {
       setCreating(false)
     }
+  }
+
+  function handleOpenDuplicateCandidate() {
+    if (!duplicateCandidate) return
+    const studentId = duplicateCandidate.existing.student_id
+    setDuplicateCandidate(null)
+    setNewName('')
+    openStudent(studentId)
   }
 
   async function openStudent(studentId: string) {
@@ -413,7 +450,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1 className="logo">Student Review <span>AI</span></h1>
+        <h1 className="logo">High School Application Review <span>AI</span></h1>
         <div className="header-actions">
           {view === 'detail' && (
             <button className="btn-ghost" onClick={() => { setView('roster'); refreshStudents() }}>← All students</button>
@@ -424,6 +461,35 @@ export default function App() {
       </header>
 
       {error && <p className="error-banner">{error}</p>}
+
+      {duplicateCandidate && (
+        <div className="modal-overlay">
+          <div className="modal modal-small" role="dialog" aria-modal="true" aria-labelledby="duplicate-title">
+            <div className="modal-head">
+              <div>
+                <h2 id="duplicate-title">Candidate already exists</h2>
+                <small>Duplicate name found</small>
+              </div>
+            </div>
+            <div className="modal-body">
+              <p className="modal-copy">
+                A candidate named <strong>{duplicateCandidate.existing.applicant_name}</strong> is already in the system.
+              </p>
+              <p className="placeholder">
+                Open the existing profile, or add <strong>{duplicateCandidate.requestedName}</strong> as a separate candidate.
+              </p>
+              <div className="modal-actions">
+                <button className="btn-secondary" onClick={handleOpenDuplicateCandidate}>
+                  Open existing profile
+                </button>
+                <button className="btn-primary" onClick={() => handleCreate(true)} disabled={creating}>
+                  {creating ? 'Adding...' : 'Add as new candidate'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSettings && (
         <div className="modal-overlay" onClick={() => setShowSettings(false)}>
@@ -512,7 +578,7 @@ export default function App() {
         <div className="roster-col">
           <div className="roster-head">
             <h2>Students</h2>
-            <small>FUS Lab · Applicant Review</small>
+            <small>Hynynen Lab · Applicant Review</small>
           </div>
           <div className="roster-toolbar">
             <input
@@ -528,7 +594,7 @@ export default function App() {
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleCreate() }}
             />
-            <button className="btn-primary roster-add" onClick={handleCreate} disabled={creating || !newName.trim()}>
+            <button className="btn-primary roster-add" onClick={() => handleCreate()} disabled={creating || !newName.trim()}>
               {creating ? 'Adding…' : '+ New Student'}
             </button>
           </div>
@@ -713,7 +779,7 @@ function FieldGroup({
   loading?: boolean
   changedKeys?: Set<string>
 }) {
-  const rows = detail ? fields.filter(([, key]) => nonEmpty(detail[key])) : []
+  const filledCount = detail ? fields.filter(([, key]) => nonEmpty(detail[key])).length : 0
   return (
     <div className="field-group">
       <div className="field-group-title">
@@ -721,19 +787,17 @@ function FieldGroup({
         {loading ? (
           <span className="pill pill-proc"><span className="spinner" aria-hidden="true" />reading…</span>
         ) : (
-          <span className={`pill ${rows.length ? 'pill-good' : 'pill-muted'}`}>{rows.length ? `${rows.length} fields` : 'empty'}</span>
+          <span className={`pill ${filledCount ? 'pill-good' : 'pill-muted'}`}>{filledCount}/{fields.length} fields</span>
         )}
       </div>
       {loading ? (
         <FieldSkeleton />
-      ) : rows.length === 0 ? (
-        <p className="placeholder">{empty}</p>
       ) : (
         <dl className="field-list">
-          {rows.map(([label, key]) => (
+          {fields.map(([label, key]) => (
             <div className={`field-row ${changedKeys?.has(key) ? 'field-flash' : ''}`} key={key}>
               <dt>{label}</dt>
-              <dd>{String(detail?.[key])}</dd>
+              <dd>{displayValue(key, detail?.[key])}</dd>
             </div>
           ))}
         </dl>
@@ -755,4 +819,3 @@ function FieldSkeleton() {
     </div>
   )
 }
-

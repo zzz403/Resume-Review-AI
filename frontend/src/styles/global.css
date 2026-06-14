@@ -866,6 +866,10 @@ h1, h2, h3 {
   animation: pop 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
+.modal-small {
+  max-width: 460px;
+}
+
 .modal-head {
   position: sticky;
   top: 0;
@@ -905,6 +909,23 @@ h1, h2, h3 {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.modal-copy {
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.modal-actions .btn-primary {
+  align-self: auto;
 }
 
 .modal-danger {

@@ -190,7 +190,8 @@ resume_notes: "Strengths: <...>. Gaps: <...>." naming which components scored an
 technical_experience: concise prose listing hands-on technical/research experience (no commas as
 separators). technical_skills: comma-separated concrete skills (languages, lab techniques, tools).
 volunteer_experience / previous_research_experience: booleans. career_goals: one sentence on stated
-goals. commitment_to_stem: one sentence on demonstrated long-term STEM commitment.
+goals. commitment_to_stem: one concise date-free sentence on demonstrated long-term STEM commitment;
+summarize evidence categories instead of copying resume entries or dates.
 """
 
 
@@ -330,8 +331,8 @@ def _map_application(filename: str, data: dict, text: str) -> dict:
         "resume_notes": _clean(data.get("resume_notes")),
         "features_technical_experience": _clean(data.get("technical_experience")),
         "features_technical_skills": _clean(data.get("technical_skills")),
-        "volunteer_experience": bool(data.get("volunteer_experience")),
-        "previous_research_experience": bool(data.get("previous_research_experience")),
+        "volunteer_experience": "Yes" if data.get("volunteer_experience") else "No",
+        "previous_research_experience": "Yes" if data.get("previous_research_experience") else "No",
         "career_goals": _clean(data.get("career_goals")),
         "stem_statement_rating_10": _num_or_blank(data.get("stem_statement_rating_10")),
         "stem_statement_notes": _clean(data.get("stem_statement_notes")),

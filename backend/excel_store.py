@@ -83,6 +83,8 @@ EXCEL_COLUMNS = [
     ("academic_ranking", "Academic Ranking"),
 ]
 
+YES_NO_KEYS = {"volunteer_experience", "previous_research_experience"}
+
 
 def create_student(name: str, email: str = "") -> dict:
     """Create an empty student row keyed by a fresh student_id."""
@@ -284,6 +286,9 @@ def _read_rows() -> list[dict]:
             row["general_application_note"] = row["processing_warnings"]
         row.pop("teacher_score_note", None)
         row.pop("processing_warnings", None)
+        for key in YES_NO_KEYS:
+            if key in row:
+                row[key] = _yes_no_value(row.get(key))
         if not row.get("student_id"):
             row["student_id"] = uuid.uuid4().hex
         if not row.get("created_at"):
@@ -398,7 +403,17 @@ def _excel_value(row: dict, key: str) -> object:
         return row.get("features") or _combined_features(row)
     if key == "general_application_note":
         return _general_application_note(row)
+    if key in YES_NO_KEYS:
+        return _yes_no_value(row.get(key))
     return row.get(key, "")
+
+
+def _yes_no_value(value: object) -> object:
+    if value is True or value == "true":
+        return "Yes"
+    if value is False or value == "false":
+        return "No"
+    return value
 
 
 def _general_application_note(row: dict) -> str:

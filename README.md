@@ -30,20 +30,55 @@ Keep the Terminal or Command Prompt window open while using the app. Closing it 
 
 http://127.0.0.1:3000/
 
-## Using ChatGPT/OpenAI For Image Reading
+## How To Use The App
 
-The app can use OpenAI vision models to read scanned or image-based application pages when normal PDF text extraction and OCR are not reliable.
+When the app opens, the first page is the `Students` roster for `Hynynen Lab · Applicant Review`. Use this page to add candidates, open existing profiles, search the roster, and see each candidate's review status.
 
-1. Open the app.
-2. In `AI Providers`, choose `Image Reading AI`.
-3. Choose `OpenAI (ChatGPT)`, `Anthropic (Claude)`, or `Google Gemini`.
-4. Paste the matching API key.
-5. Click `Save Key`.
-6. Upload the application or teacher evaluation again.
+### 1. Set Up AI Keys
 
-When key fields are missing or suspicious, the app will try AI image reading as a fallback. This is intended for scanned forms, handwritten teacher evaluations, checkbox rankings, and hard-to-read PDF pages. Clear typed PDFs still use normal extraction first because it is faster and cheaper.
+1. Open `Settings`.
+2. Choose a provider for `Text AI`.
+3. Paste the matching API key and click `Save`.
+4. If you want image reading for scanned forms, choose a provider under `Image Reading AI`, paste that key, and click `Save`.
 
-You do not need two API keys unless you want separate providers. For example, you can use OpenAI for both text scoring and image reading, or Anthropic/Gemini for both. DeepSeek can be used for text scoring, but not for image reading.
+OpenAI/ChatGPT, Anthropic/Claude, and Google Gemini can be used for image reading. DeepSeek can be used for text scoring, but not for image reading.
+
+### 2. Add A Candidate
+
+1. Type the applicant's name into `New student name`.
+2. Click `+ New Student`.
+3. If a candidate with the same name already exists, choose either `Open existing profile` or `Add as new candidate`.
+
+The `+ New Student` button stays disabled until a name is entered. This prevents empty student records.
+
+### 3. Upload Files
+
+1. Open the candidate profile from the roster.
+2. Upload the main application package into `Application`.
+3. Upload the teacher reference form into `Teacher Evaluation`.
+4. Wait until the processing indicator finishes.
+
+The application package usually includes the cover letter, resume/CV, Sunnybrook form, transcript, and STEM statement.
+
+### 4. Review Results
+
+After processing, the candidate profile shows extracted application fields, teacher evaluation fields, notes, and scores. The roster also shows a summary of each candidate, including school, grade, status, resume score, cover letter score, STEM statement score, teacher score, and academic ranking.
+
+### 5. Manually Correct Fields
+
+Use `Edit & review` to compare extracted fields against the source PDF and manually correct saved values. Save changes before returning to the roster or exporting the spreadsheet.
+
+### 6. Export Or Reset
+
+Use `Download xlsx` to export the current spreadsheet. Use `Settings` > `Reset all saved data` only when starting a new application cycle.
+
+See `Main Output` for where exported data is stored, and `Resetting Data` for exactly what reset deletes.
+
+### Image Reading Notes
+
+The app can use image-reading AI for scanned forms, handwritten teacher evaluations, checkbox rankings, and hard-to-read PDF pages. Clear typed PDFs still use normal extraction first because it is faster and cheaper.
+
+When key fields are missing or suspicious, upload the file again after saving a valid image-reading API key.
 
 ## Extraction Method
 

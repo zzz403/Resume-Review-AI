@@ -12,6 +12,8 @@ import type { StudentDetail } from '../types'
 
 type FormValues = Record<string, string>
 
+const YES_NO_KEYS = new Set(['volunteer_experience', 'previous_research_experience'])
+
 interface Props {
   studentId: string
   detail: StudentDetail
@@ -28,7 +30,13 @@ function toForm(detail: StudentDetail): FormValues {
   const out: FormValues = {}
   for (const key of ALL_EDITABLE_KEYS) {
     const v = detail[key]
-    out[key] = v === null || v === undefined ? '' : String(v)
+    if (YES_NO_KEYS.has(key)) {
+      if (v === true || v === 'true') out[key] = 'Yes'
+      else if (v === false || v === 'false') out[key] = 'No'
+      else out[key] = v === null || v === undefined ? '' : String(v)
+    } else {
+      out[key] = v === null || v === undefined ? '' : String(v)
+    }
   }
   return out
 }

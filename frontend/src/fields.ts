@@ -47,15 +47,15 @@ export const APPLICATION_BLOCKS: FieldBlock[] = [
   {
     title: 'Notes',
     fields: [
+      { label: 'Application note', key: 'general_application_note', type: 'textarea', full: true },
       { label: 'Cover letter notes', key: 'cover_letter_notes', type: 'textarea', full: true },
       { label: 'STEM statement notes', key: 'stem_statement_notes', type: 'textarea', full: true },
       { label: 'FUS understanding', key: 'fus_understanding_summary', type: 'textarea', full: true },
       { label: 'Features', key: 'features', type: 'textarea', full: true },
-      { label: 'Volunteer experience', key: 'volunteer_experience', type: 'textarea', full: true },
-      { label: 'Previous research', key: 'previous_research_experience', type: 'textarea', full: true },
+      { label: 'Volunteer experience', key: 'volunteer_experience', type: 'select', options: ['', 'Yes', 'No'] },
+      { label: 'Previous research', key: 'previous_research_experience', type: 'select', options: ['', 'Yes', 'No'] },
       { label: 'Career goals', key: 'career_goals', type: 'textarea', full: true },
       { label: 'Commitment to STEM', key: 'commitment_to_stem', type: 'textarea', full: true },
-      { label: 'Application note', key: 'general_application_note', type: 'textarea', full: true },
       { label: 'Sunnybrook form note', key: 'sunnybrook_form_note', type: 'textarea', full: true },
     ],
   },
@@ -63,18 +63,18 @@ export const APPLICATION_BLOCKS: FieldBlock[] = [
 
 export const TEACHER_BLOCKS: FieldBlock[] = [
   {
+    title: 'Notes',
+    fields: [
+      { label: 'Teacher evaluation note', key: 'teacher_evaluation_note', type: 'textarea', full: true },
+      { label: 'Teacher comments', key: 'teacher_comments', type: 'textarea', full: true },
+    ],
+  },
+  {
     title: 'Scores',
     fields: [
       { label: 'Teacher report', key: 'teacher_report_rating_5', type: 'score', max: 5 },
       { label: 'Total score', key: 'teacher_evaluation_total_score', type: 'text' },
       { label: 'Academic ranking', key: 'academic_ranking', type: 'text' },
-    ],
-  },
-  {
-    title: 'Notes',
-    fields: [
-      { label: 'Teacher comments', key: 'teacher_comments', type: 'textarea', full: true },
-      { label: 'Teacher evaluation note', key: 'teacher_evaluation_note', type: 'textarea', full: true },
     ],
   },
 ]
