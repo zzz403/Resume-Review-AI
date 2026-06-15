@@ -112,6 +112,23 @@ def get_student(student_id: str) -> dict | None:
     return None
 
 
+def find_duplicate_student(name: str = "", email: str = "") -> dict | None:
+    normalized_email = email.strip().lower()
+    normalized_name = _normalize_name(name)
+    for row in _read_rows():
+        row_email = str(row.get("email", "")).strip().lower()
+        if normalized_email and row_email and row_email == normalized_email:
+            return {"student": row, "reason": "email"}
+        row_name = _normalize_name(str(row.get("applicant_name", "")))
+        if normalized_name and row_name and row_name == normalized_name:
+            return {"student": row, "reason": "name"}
+        if _reversed_name(normalized_name) and _reversed_name(normalized_name) == row_name:
+            return {"student": row, "reason": "reversed_name"}
+        if _sorted_name_tokens(normalized_name) and _sorted_name_tokens(normalized_name) == _sorted_name_tokens(row_name):
+            return {"student": row, "reason": "same_name_tokens"}
+    return None
+
+
 def delete_student(student_id: str) -> dict | None:
     rows = _read_rows()
     removed = None
@@ -137,6 +154,8 @@ def save_application_profile(profile: dict, student_id: str) -> dict:
 
     incoming = {column: profile.get(column, "") for column in COLUMNS}
     incoming["features"] = _combined_features(incoming)
+    incoming["general_application_note"] = _note_or_na(incoming.get("general_application_note"))
+    incoming["sunnybrook_form_note"] = _note_or_na(incoming.get("sunnybrook_form_note"))
     incoming["submitted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     rows[index] = _merge_into_student(rows[index], incoming)
@@ -192,7 +211,7 @@ def save_teacher_evaluation_profile(profile: dict, student_id: str) -> dict:
 
     incoming = {column: profile.get(column, "") for column in COLUMNS}
     updates = _non_empty_values(incoming)
-    updates["teacher_evaluation_note"] = incoming.get("teacher_evaluation_note", "")
+    updates["teacher_evaluation_note"] = _note_or_na(incoming.get("teacher_evaluation_note"))
     rows[index] = _merge_into_student(rows[index], updates)
     _write_json(rows)
     _write_xlsx(rows)
@@ -268,8 +287,29 @@ def _non_empty_values(row: dict) -> dict:
     return {key: value for key, value in row.items() if value not in ("", None)}
 
 
+def _note_or_na(value: object) -> str:
+    text = str(value or "").strip()
+    return text if text else "N/A"
+
+
 def _normalize_name(value: str) -> str:
-    return " ".join(value.lower().replace("_", " ").split())
+    for separator in ["_", "-", ","]:
+        value = value.replace(separator, " ")
+    return " ".join(value.lower().split())
+
+
+def _reversed_name(value: str) -> str:
+    parts = value.split()
+    if len(parts) < 2:
+        return ""
+    return " ".join(reversed(parts))
+
+
+def _sorted_name_tokens(value: str) -> str:
+    parts = value.split()
+    if len(parts) < 2:
+        return ""
+    return " ".join(sorted(parts))
 
 
 def _read_rows() -> list[dict]:
@@ -286,6 +326,11 @@ def _read_rows() -> list[dict]:
             row["general_application_note"] = row["processing_warnings"]
         row.pop("teacher_score_note", None)
         row.pop("processing_warnings", None)
+        if _application_row_has_application(row):
+            row["general_application_note"] = _note_or_na(row.get("general_application_note"))
+            row["sunnybrook_form_note"] = _note_or_na(row.get("sunnybrook_form_note"))
+        if _application_row_has_teacher_evaluation(row):
+            row["teacher_evaluation_note"] = _note_or_na(row.get("teacher_evaluation_note"))
         for key in YES_NO_KEYS:
             if key in row:
                 row[key] = _yes_no_value(row.get(key))

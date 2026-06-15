@@ -8,9 +8,11 @@ import {
   clearApplicationData,
   createStudent,
   deleteStudent,
+  DuplicateImportError,
   getLlmSettings,
   getStudent,
   getStudents,
+  importFile,
   saveLlmSettings,
   submitApplication,
   submitTeacherEvaluation,
@@ -141,6 +143,13 @@ function displayValue(key: string, value: unknown): string {
   return String(value)
 }
 
+function duplicateReasonLabel(reason: string): string {
+  if (reason === 'email') return 'email'
+  if (reason === 'reversed_name') return 'reversed name'
+  if (reason === 'same_name_tokens') return 'same name words'
+  return 'name'
+}
+
 export default function App() {
   const [view, setView] = useState<'roster' | 'detail'>('roster')
   // The detail page opens in read-only "summary" mode; the editable PDF + form
@@ -151,6 +160,8 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
+  const [importingApplications, setImportingApplications] = useState(false)
+  const [importProgress, setImportProgress] = useState('')
   const [duplicateCandidate, setDuplicateCandidate] = useState<DuplicateCandidate | null>(null)
 
   const [detail, setDetail] = useState<StudentDetail | null>(null)
@@ -280,6 +291,52 @@ export default function App() {
       setError(err instanceof Error ? err.message : 'Could not create student.')
     } finally {
       setCreating(false)
+    }
+  }
+
+  async function handleImportApplications(files: FileList | null) {
+    const selected = Array.from(files ?? [])
+    if (selected.length === 0) return
+    setImportingApplications(true)
+    setImportProgress(`0/${selected.length}`)
+    setError(null)
+    let imported = 0
+    let skipped = 0
+    const duplicateWarnings: string[] = []
+    try {
+      for (let index = 0; index < selected.length; index += 1) {
+        const file = selected[index]
+        setImportProgress(`${index + 1}/${selected.length}`)
+        try {
+          await importFile(file)
+          imported += 1
+          refreshStudents()
+        } catch (err) {
+          if (err instanceof DuplicateImportError) {
+            skipped += 1
+            const filename = err.filename || file.name
+            const matched = err.matchedApplicantName || 'existing applicant'
+            const docType = err.docType ? `${err.docType} ` : ''
+            const reason = duplicateReasonLabel(err.reason)
+            const email = err.matchedEmail ? ` (${err.matchedEmail})` : ''
+            duplicateWarnings.push(`- ${filename} matched ${matched}${email} by ${reason}; ${docType}already exists`)
+            continue
+          }
+          throw err
+        }
+      }
+      const skippedText = skipped ? ` · skipped ${skipped} duplicate${skipped === 1 ? '' : 's'}` : ''
+      setToast({ kind: 'success', text: `Imported ${imported} file${imported === 1 ? '' : 's'}${skippedText}` })
+      if (duplicateWarnings.length > 0) {
+        setError(`Skipped duplicate files:\n${duplicateWarnings.join('\n')}`)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not import files.'
+      setError(msg)
+      setToast({ kind: 'error', text: `Import stopped after ${imported} imported, ${skipped} skipped` })
+    } finally {
+      setImportingApplications(false)
+      setImportProgress('')
     }
   }
 
@@ -597,6 +654,19 @@ export default function App() {
             <button className="btn-primary roster-add" onClick={() => handleCreate()} disabled={creating || !newName.trim()}>
               {creating ? 'Adding…' : '+ New Student'}
             </button>
+            <label className={`btn-secondary roster-import ${importingApplications ? 'is-disabled' : ''}`}>
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp"
+                multiple
+                disabled={importingApplications}
+                onChange={(e) => {
+                  handleImportApplications(e.currentTarget.files)
+                  e.currentTarget.value = ''
+                }}
+              />
+              {importingApplications ? `Importing ${importProgress}` : 'Import files'}
+            </label>
           </div>
 
           <div className="panel result-panel roster-card">

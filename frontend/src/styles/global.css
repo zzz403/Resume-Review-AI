@@ -231,6 +231,7 @@ h1, h2, h3 {
   color: var(--error-text);
   font-size: 0.875rem;
   padding: 10px 32px;
+  white-space: pre-wrap;
 }
 
 /* ── Header ── */
@@ -458,9 +459,14 @@ h1, h2, h3 {
   border-color: var(--accent);
 }
 
-.btn-secondary:disabled {
+.btn-secondary:disabled,
+.btn-secondary.is-disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.btn-secondary input[type="file"] {
+  display: none;
 }
 
 .btn-danger {
@@ -732,6 +738,13 @@ h1, h2, h3 {
   width: auto;
   align-self: stretch;
   padding: 0 20px;
+}
+
+.roster-import {
+  white-space: nowrap;
+  align-self: stretch;
+  min-height: 38px;
+  cursor: pointer;
 }
 
 .roster-card {

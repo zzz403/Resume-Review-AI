@@ -15,6 +15,7 @@ goes through llm.complete_structured, so the provider stays configurable
 """
 
 import logging
+import re
 
 import llm
 
@@ -301,7 +302,7 @@ def _map_application(filename: str, data: dict, text: str) -> dict:
     fus = _legacy_fus_understanding(text)
     transcript_rating = _legacy_transcript_rating(courses)
 
-    notes = []
+    notes = _local_missing_section_warnings(text, data, courses)
     if not _clean(data.get("applicant_name")):
         notes.append("Applicant name could not be read.")
     if current_grade is None:
@@ -405,6 +406,49 @@ def _legacy_transcript_rating(courses: list[dict]) -> object:
         return _transcript_math_science_english_rating(grades)
     except Exception:
         return ""
+
+
+def _local_missing_section_warnings(text: str, data: dict, courses: list[dict]) -> list[str]:
+    warnings = []
+    if not _looks_like_sunnybrook_form(text):
+        warnings.append("Sunnybrook application form was not clearly detected")
+    if not courses and not _looks_like_transcript(text):
+        warnings.append("Transcript section was not clearly detected")
+    if _num_or_none(data.get("cover_letter_rating_10")) is None and not _looks_like_cover_letter(text):
+        warnings.append("Cover letter section was not confidently detected")
+    if _num_or_none(data.get("resume_rating_10")) is None and not _looks_like_resume(text):
+        warnings.append("Resume/CV section was not confidently detected")
+    return warnings
+
+
+def _looks_like_sunnybrook_form(text: str) -> bool:
+    lowered = (text or "").lower()
+    markers = [
+        "sunnybrook focused ultrasound lab summer program",
+        "current high school",
+        "current grade",
+        "project preference",
+        "more about the applicant",
+    ]
+    return sum(1 for marker in markers if marker in lowered) >= 2
+
+
+def _looks_like_transcript(text: str) -> bool:
+    return bool(re.search(
+        r"Ministry\s+of\s+Education|Ontario\s+Student\s+Transcript|Student\s+Transcript|Report\s+Card",
+        text or "",
+        re.IGNORECASE,
+    ))
+
+
+def _looks_like_cover_letter(text: str) -> bool:
+    return bool(re.search(r"\bDear\b|\bTo\s+Whom\s+It\s+May\s+Concern\b|\bSincerely\b", text or "", re.IGNORECASE))
+
+
+def _looks_like_resume(text: str) -> bool:
+    lowered = (text or "").lower()
+    markers = ["resume", "curriculum vitae", "education", "experience", "skills", "awards", "certifications"]
+    return sum(1 for marker in markers if marker in lowered) >= 3
 
 
 def _clean(value: object) -> str:

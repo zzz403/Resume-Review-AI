@@ -11,6 +11,24 @@ import type {
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
+export class DuplicateImportError extends Error {
+  filename: string
+  docType: string
+  matchedApplicantName: string
+  matchedEmail: string
+  reason: string
+
+  constructor(message: string, filename = '', docType = '', matchedApplicantName = '', matchedEmail = '', reason = '') {
+    super(message)
+    this.name = 'DuplicateImportError'
+    this.filename = filename
+    this.docType = docType
+    this.matchedApplicantName = matchedApplicantName
+    this.matchedEmail = matchedEmail
+    this.reason = reason
+  }
+}
+
 export async function extractResume(file: File): Promise<ExtractResponse> {
   const form = new FormData()
   form.append('file', file)
@@ -34,6 +52,31 @@ export async function createStudent(name: string, email = ''): Promise<StudentSu
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
     throw new Error(data.detail ?? 'Failed to create student')
+  }
+  return res.json()
+}
+
+export async function importFile(file: File): Promise<StudentDetail> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${API_BASE}/students/import-file`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    if (res.status === 409) {
+      const detail = data.detail ?? {}
+      if (typeof detail === 'object' && detail !== null) {
+        throw new DuplicateImportError(
+          detail.message ?? 'Duplicate applicant skipped',
+          detail.filename ?? file.name,
+          detail.doc_type ?? '',
+          detail.matched_applicant_name ?? '',
+          detail.matched_email ?? '',
+          detail.reason ?? '',
+        )
+      }
+      throw new DuplicateImportError(String(detail || 'Duplicate applicant skipped'), file.name)
+    }
+    throw new Error(data.detail ?? 'Failed to import application')
   }
   return res.json()
 }

@@ -19,6 +19,7 @@ from excel_store import (
     create_student,
     delete_student,
     excel_file_path,
+    find_duplicate_student,
     get_student,
     list_students,
     save_application_profile,
@@ -100,6 +101,62 @@ def add_student(request: StudentCreateRequest):
     if not name:
         raise HTTPException(status_code=400, detail="Student name is required.")
     return create_student(name, request.email)
+
+
+@app.post("/students/import-file")
+@app.post("/students/import-application")
+async def import_file(file: UploadFile = File(...)):
+    content = await file.read()
+    text = extract_text(file.filename or "", content)
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="Could not extract text from this file")
+
+    fallback_name = Path(file.filename or "application").stem.replace("_", " ").replace("-", " ").strip()
+    document_type = _classify_import_document(file.filename or "", text)
+    if document_type == "":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not tell whether {file.filename or 'this file'} is an application or teacher evaluation.",
+        )
+
+    if document_type == "teacher_evaluation":
+        profile = extract_teacher_evaluation_profile(file.filename or "", text, content)
+        student_name = str(profile.get("applicant_name") or "").strip() or fallback_name or "Unnamed applicant"
+        duplicate = find_duplicate_student(student_name, "")
+        if duplicate is not None:
+            existing = duplicate["student"]
+            if _row_has_teacher_evaluation(existing):
+                raise _duplicate_import_error(file.filename or "teacher evaluation", "teacher evaluation", duplicate)
+            student_id = existing["student_id"]
+        else:
+            student_id = create_student(student_name)["student_id"]
+
+        TEACHER_EVALUATION_DIR.mkdir(parents=True, exist_ok=True)
+        file_name = _safe_file_name(file.filename or "teacher_evaluation")
+        saved_path = _unique_path(TEACHER_EVALUATION_DIR / file_name)
+        saved_path.write_bytes(content)
+        profile["teacher_evaluation_file_name"] = saved_path.name
+        return save_teacher_evaluation_profile(profile, student_id)
+
+    profile = extract_application_profile(file.filename or "", text, content)
+    student_name = str(profile.get("applicant_name") or "").strip() or fallback_name or "Unnamed applicant"
+    student_email = str(profile.get("email") or "")
+    duplicate = find_duplicate_student(student_name, student_email)
+    if duplicate is not None:
+        existing = duplicate["student"]
+        if _row_has_application(existing):
+            raise _duplicate_import_error(file.filename or "application", "application", duplicate)
+        student_id = existing["student_id"]
+    else:
+        student_id = create_student(student_name, student_email)["student_id"]
+
+    APPLICATION_DIR.mkdir(parents=True, exist_ok=True)
+    file_name = _safe_file_name(file.filename or "application")
+    saved_path = _unique_path(APPLICATION_DIR / file_name)
+    saved_path.write_bytes(content)
+
+    profile["file_name"] = saved_path.name
+    return save_application_profile(profile, student_id)
 
 
 @app.get("/students/{student_id}")
@@ -283,6 +340,99 @@ def _serve_stored_file(directory: Path, file_name: object, label: str) -> FileRe
         media_type=media_type,
         filename=path.name,
         content_disposition_type="inline",
+    )
+
+
+def _classify_import_document(filename: str, text: str) -> str:
+    teacher_score = _teacher_evaluation_score(filename, text)
+    application_score = _application_score(filename, text)
+    if teacher_score >= 2 and teacher_score >= application_score:
+        return "teacher_evaluation"
+    if application_score >= 2 and application_score > teacher_score:
+        return "application"
+    if _looks_like_teacher_filename(filename):
+        return "teacher_evaluation"
+    return ""
+
+
+def _teacher_evaluation_score(filename: str, text: str) -> int:
+    haystack = f"{filename}\n{text[:5000]}".lower()
+    teacher_markers = [
+        "teacher evaluation",
+        "teacher reference",
+        "teacher recommendation",
+        "teacher's report",
+        "student's full name",
+        "students full name",
+        "academic ranking",
+        "further comments",
+        "total score",
+    ]
+    return sum(1 for marker in teacher_markers if marker in haystack)
+
+
+def _application_score(filename: str, text: str) -> int:
+    haystack = f"{filename}\n{text[:8000]}".lower()
+    application_markers = [
+        "fus hs program",
+        "focused ultrasound lab",
+        "sunnybrook",
+        "application form",
+        "cover letter",
+        "resume",
+        "curriculum vitae",
+        "transcript",
+        "stem statement",
+        "project preference",
+        "current grade",
+        "engineering and technology development",
+        "experimental work",
+        "programming",
+    ]
+    return sum(1 for marker in application_markers if marker in haystack)
+
+
+def _row_has_application(row: dict) -> bool:
+    file_name = str(row.get("file_name") or "")
+    if file_name and _looks_like_teacher_filename(file_name):
+        return False
+    return any(row.get(field) not in ("", None) for field in [
+        "file_name",
+        "resume_rating_10",
+        "cover_letter_rating_10",
+        "stem_statement_rating_10",
+    ])
+
+
+def _row_has_teacher_evaluation(row: dict) -> bool:
+    return any(row.get(field) not in ("", None) for field in [
+        "teacher_evaluation_file_name",
+        "teacher_report_rating_5",
+        "teacher_evaluation_total_score",
+        "teacher_evaluation_note",
+        "teacher_comments",
+        "academic_ranking",
+    ])
+
+
+def _looks_like_teacher_filename(filename: str) -> bool:
+    lowered = filename.lower()
+    return "teacher" in lowered or "reference" in lowered or "recommendation" in lowered
+
+
+def _duplicate_import_error(filename: str, doc_type: str, duplicate: dict) -> HTTPException:
+    existing = duplicate["student"]
+    duplicate_name = existing.get("applicant_name") or "existing applicant"
+    return HTTPException(
+        status_code=409,
+        detail={
+            "message": f"Duplicate {doc_type} skipped: {duplicate_name} already has a {doc_type}.",
+            "filename": filename,
+            "doc_type": doc_type,
+            "matched_applicant_name": duplicate_name,
+            "matched_email": existing.get("email", ""),
+            "reason": duplicate["reason"],
+        },
     )
 
 

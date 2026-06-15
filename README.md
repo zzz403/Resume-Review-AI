@@ -45,6 +45,12 @@ OpenAI/ChatGPT, Anthropic/Claude, and Google Gemini can be used for image readin
 
 ### 2. Add A Candidate
 
+For large batches, use `Import files` on the roster instead of typing every name by hand. Select one or more application packages and/or teacher evaluation files. The app reads each file, detects whether it is an application or teacher evaluation, creates the applicant profile when needed, and attaches the file to the matching applicant row.
+
+The import matcher uses applicant email when available, then normalized applicant name. It compensates for capitalization, underscores, hyphens, extra spaces, and reversed name order. If a matched applicant already has that same file type, the file is skipped and the warning lists the skipped filename.
+
+Manual profile creation is still available for fallback cases, such as when a file is not readable by AI or cannot be classified during import:
+
 1. Type the applicant's name into `New student name`.
 2. Click `+ New Student`.
 3. If a candidate with the same name already exists, choose either `Open existing profile` or `Add as new candidate`.
@@ -53,10 +59,12 @@ The `+ New Student` button stays disabled until a name is entered. This prevents
 
 ### 3. Upload Files
 
-1. Open the candidate profile from the roster.
-2. Upload the main application package into `Application`.
-3. Upload the teacher reference form into `Teacher Evaluation`.
-4. Wait until the processing indicator finishes.
+Use either workflow:
+
+- Bulk workflow: click `Import files` from the roster and select application packages and/or teacher evaluation files.
+- Single-candidate workflow: open the candidate profile from the roster, upload the main application package into `Application`, then upload the teacher reference form into `Teacher Evaluation`.
+
+Wait until the processing indicator finishes before reviewing the extracted fields.
 
 The application package usually includes the cover letter, resume/CV, Sunnybrook form, transcript, and STEM statement.
 
@@ -89,6 +97,7 @@ When key fields are missing or suspicious, upload the file again after saving a 
 - For teacher evaluation checkboxes, the program can use visual checkbox detection when text extraction does not clearly show the selected ranking.
 - For some scanned or handwritten application and teacher evaluation fields, the program can use AI vision if a vision-capable AI provider key is configured.
 - If a field cannot be read reliably, the program leaves the value blank and writes a note in the relevant note column.
+- If there is no issue for `General Application Note`, `Sunnybrook Form Note`, or `Teacher Evaluation Note`, the app writes `N/A`.
 - AI is used when available for more flexible summary/evaluation tasks, such as resume feature summaries, STEM statement scoring, career goals, previous research experience, and teacher comment summaries.
 - If the API key is missing or invalid, the program falls back to rule-based or text-based extraction where possible.
 
@@ -100,13 +109,14 @@ When key fields are missing or suspicious, upload the file again after saving a 
 - The Excel file contains one row per applicant.
 - Application uploads and teacher evaluation uploads are matched mainly by applicant name or email.
 - Teacher evaluations can be uploaded separately and later merged into the matching applicant row.
+- `Import files` skips duplicate files only when the matching applicant already has that same file type. For example, an application and teacher evaluation for the same applicant are merged into one row; a second application for that applicant is skipped with a filename warning.
 
 ## General Application Notes
 
 - `General Application Note`
   - Records missing or unclear application sections and whether the teacher evaluation is missing.
   - This column is for application-structure problems, not detailed form-reading problems.
-  - It is empty when no general application issue is detected and the teacher evaluation has been uploaded.
+  - It is `N/A` when no general application issue is detected.
   - It may mention:
     - Sunnybrook application form was not clearly detected
     - transcript section was not clearly detected

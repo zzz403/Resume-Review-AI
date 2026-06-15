@@ -101,6 +101,12 @@ def _model(provider: str | None = None) -> str:
     return os.getenv(model_env, "").strip() or default_model
 
 
+def _openai_supports_temperature(model: str) -> bool:
+    normalized = model.strip().lower()
+    no_custom_temperature_prefixes = ("gpt-5", "o1", "o3", "o4")
+    return not normalized.startswith(no_custom_temperature_prefixes)
+
+
 def is_configured(provider: str | None = None) -> bool:
     """True when the active (or given) provider has a real-looking API key."""
     key = _api_key(provider)
@@ -287,19 +293,13 @@ def validate_key(api_key: str, provider: str | None = None) -> None:
     provider = provider or get_text_provider()
     prev = os.environ.get(_PROVIDERS[provider][0])
     os.environ[_PROVIDERS[provider][0]] = api_key.strip()
-    prev_provider = os.environ.get("LLM_PROVIDER")
-    os.environ["LLM_PROVIDER"] = provider
     try:
-        complete("Reply OK.", max_tokens=5, temperature=0)
+        _complete_with_provider(provider, "Reply OK.", max_tokens=16, temperature=0)
     finally:
         if prev is None:
             os.environ.pop(_PROVIDERS[provider][0], None)
         else:
             os.environ[_PROVIDERS[provider][0]] = prev
-        if prev_provider is None:
-            os.environ.pop("LLM_PROVIDER", None)
-        else:
-            os.environ["LLM_PROVIDER"] = prev_provider
 
 
 # ── Providers ──────────────────────────────────────────────────────────────
@@ -396,13 +396,17 @@ def _openai_complete(prompt: str, max_tokens: int, temperature: float, image_png
             }
         )
 
+    model = _model("openai")
+    kwargs: dict = {
+        "model": model,
+        "input": [{"role": "user", "content": content}],
+        "max_output_tokens": max_tokens,
+    }
+    if _openai_supports_temperature(model):
+        kwargs["temperature"] = temperature
+
     try:
-        resp = client.responses.create(
-            model=_model("openai"),
-            input=[{"role": "user", "content": content}],
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-        )
+        resp = client.responses.create(**kwargs)
     except Exception as exc:  # noqa: BLE001
         raise _normalize_error(exc) from exc
     return resp.output_text or ""
