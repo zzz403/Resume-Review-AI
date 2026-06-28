@@ -19,5 +19,10 @@ backend/*.pyc
 # Local dev / analysis scripts (hardcode sample PII)
 backend/bench_models.py
 backend/bench_effort.py
+backend/benchmark.py
 backend/prototype_llm_extract.py
 changes-summary.html
+
+# Benchmark outputs (contain extracted applicant PII)
+benchmark_results.json
+benchmark_report.md

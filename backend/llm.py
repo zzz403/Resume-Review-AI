@@ -44,6 +44,13 @@ _PLACEHOLDER_KEYS = {
 }
 
 
+# Token usage from the most recent structured call, keyed input/output. Set by
+# the _*_structured helpers so callers (e.g. the benchmark harness) can read it
+# without each provider SDK leaking out. Not thread-safe by design — calls are
+# sequential in the extraction pipeline.
+LAST_USAGE: dict = {}
+
+
 class LLMError(RuntimeError):
     """Raised when an LLM call cannot be completed."""
 
@@ -194,6 +201,9 @@ def _openai_structured(prompt: str, schema: dict, schema_name: str, max_tokens: 
         resp = client.responses.create(**kwargs)
     except Exception as exc:  # noqa: BLE001
         raise _normalize_error(exc) from exc
+    usage = getattr(resp, "usage", None)
+    LAST_USAGE.clear()
+    LAST_USAGE.update({"input": getattr(usage, "input_tokens", 0), "output": getattr(usage, "output_tokens", 0)})
     return json.loads(resp.output_text or "{}")
 
 
@@ -217,8 +227,29 @@ def _anthropic_structured(prompt: str, schema: dict, schema_name: str, max_token
         )
     except Exception as exc:  # noqa: BLE001
         raise _normalize_error(exc) from exc
+    usage = getattr(message, "usage", None)
+    LAST_USAGE.clear()
+    LAST_USAGE.update({"input": getattr(usage, "input_tokens", 0), "output": getattr(usage, "output_tokens", 0)})
     text = next((block.text for block in message.content if getattr(block, "type", None) == "text"), "{}")
     return json.loads(text)
+
+
+def _gemini_thinking_config(model: str):
+    """Thinking config for Gemini 2.5 models. Defaults to 0 (off) because the
+    extraction tasks are read/transcribe-bound rather than reasoning-bound, and
+    thinking tokens are pure added cost; raise GEMINI_THINKING_BUDGET only when a
+    hard scan needs it (-1 = dynamic). Returns None for models that do not accept
+    a thinking budget of 0 — non-2.5 models, and 2.5-pro (which cannot disable
+    thinking) — letting them use their default thinking behaviour."""
+    if "2.5" not in model or "pro" in model:
+        return None
+    from google.genai import types
+
+    try:
+        budget = int(os.getenv("GEMINI_THINKING_BUDGET", "0").strip())
+    except ValueError:
+        budget = 0
+    return types.ThinkingConfig(thinking_budget=budget)
 
 
 def _gemini_structured(prompt: str, schema: dict, max_tokens: int, images: list[bytes] | None) -> dict:
@@ -226,20 +257,31 @@ def _gemini_structured(prompt: str, schema: dict, max_tokens: int, images: list[
     from google.genai import types
 
     client = genai.Client(api_key=_api_key("gemini"))
+    model = _model("gemini")
     parts: list[object] = [types.Part.from_bytes(data=png, mime_type="image/png") for png in images or []]
     parts.append(prompt)
     try:
         resp = client.models.generate_content(
-            model=_model("gemini"),
+            model=model,
             contents=parts,
             config=types.GenerateContentConfig(
                 max_output_tokens=max_tokens,
                 response_mime_type="application/json",
                 response_json_schema=schema,
+                thinking_config=_gemini_thinking_config(model),
             ),
         )
     except Exception as exc:  # noqa: BLE001
         raise _normalize_error(exc) from exc
+    usage = getattr(resp, "usage_metadata", None)
+    LAST_USAGE.clear()
+    LAST_USAGE.update({
+        "input": getattr(usage, "prompt_token_count", 0) or 0,
+        "output": getattr(usage, "candidates_token_count", 0) or 0,
+        # thinking tokens are billed at the output rate but are not included in
+        # candidates_token_count, so surface them for accurate cost accounting.
+        "thoughts": getattr(usage, "thoughts_token_count", 0) or 0,
+    })
     return json.loads(resp.text or "{}")
 
 
@@ -360,6 +402,7 @@ def _gemini_complete(prompt: str, max_tokens: int, temperature: float, image_png
     from google.genai import types
 
     client = genai.Client(api_key=_api_key("gemini"))
+    model = _model("gemini")
     if image_png is not None:
         contents: object = [
             types.Part.from_bytes(data=image_png, mime_type="image/png"),
@@ -370,11 +413,12 @@ def _gemini_complete(prompt: str, max_tokens: int, temperature: float, image_png
 
     try:
         resp = client.models.generate_content(
-            model=_model("gemini"),
+            model=model,
             contents=contents,
             config=types.GenerateContentConfig(
                 temperature=temperature,
                 max_output_tokens=max_tokens,
+                thinking_config=_gemini_thinking_config(model),
             ),
         )
     except Exception as exc:  # noqa: BLE001
